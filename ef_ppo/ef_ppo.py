@@ -2,13 +2,13 @@ import numpy as np
 import torch
 from deprl.vendor.tonic.utils import logger
 from deprl.vendor.tonic.torch.agents import Agent
-from efppo.models import HLActorCritic 
+from ef_ppo.models import HLActorCritic 
 from deprl.vendor.tonic.torch import models
 from deprl.vendor.tonic.torch import normalizers
-from efppo.updaters import critics as critic_updaters
+from ef_ppo import critics as critic_updaters
 from deprl.vendor.tonic.torch import updaters
-from efppo.hl_segment import HLSegment
-from efppo.utils import n_sect
+from ef_ppo.hl_segment import HLSegment
+from ef_ppo.utils import n_sect
 
 # Defaults
 def default_model():
@@ -382,3 +382,10 @@ class EF_PPO(Agent):
         return dict(actor=None if fine_tune else actor_infos, 
                     h_critic=h_critic_infos,
                     l_critic=l_critic_infos)
+
+    def _load_weights(self, path): 
+        """
+        Load weights 
+        """
+        state_dict = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(state_dict)

@@ -8,10 +8,10 @@ from deprl.custom_test_environment import (
     test_dm_control,
     test_scone,
 )
-from efppo.test_environment import test_mujoco
+from ef_ppo.test_environment import test_mujoco
 
 from deprl.vendor.tonic import logger
-from efppo.ef_ppo import EF_PPO
+from ef_ppo.ef_ppo import EF_PPO
 
 if "ROBOHIVE_VERBOSITY" not in os.environ:
     os.environ["ROBOHIVE_VERBOSITY"] = "ALWAYS"

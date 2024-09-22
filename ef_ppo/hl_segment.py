@@ -15,6 +15,7 @@ class HLSegment(Segment):
         h_term_penalty=None,
         l_term_penalty=None
     ):
+        self.steps_before_batches = 0
         self.trace_decay_sum_weights = np.array(
             [trace_decay**i for i in range(size)]
         )[::-1]
@@ -144,3 +145,4 @@ class HLSegment(Segment):
         self.buffers["Q_tot"] = Q_tot
         self.buffers["EF_COCP_advantages"] = \
             Q_tot - np.maximum(h_bootstrap, l_bootstrap - budgets)
+

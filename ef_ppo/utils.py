@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
 def n_sect(function, x_min, x_max, n_iter=5, n=20):
     """
