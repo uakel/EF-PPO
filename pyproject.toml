@@ -9,7 +9,7 @@ readme = "README.md"
 python = ">=3.10, <=3.11.5"
 deprl = "^0.5.0"
 myosuite = "^2.5.0"
-gait-40-dof-22-musc-sagittal = "^0.1.2"
+gait-40-dof-22-musc-sagittal = "^0.1.4"
 
 [build-system]
 requires = ["poetry-core"]

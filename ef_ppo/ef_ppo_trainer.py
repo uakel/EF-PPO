@@ -27,9 +27,11 @@ class Trainer:
         save_steps=5e5,
         test_episodes=20,
         discount=0.99,
-        constraint_function=lambda observations, muscle_states: -np.ones(
+        constraint_function="""
+        lambda observations, muscle_states: -np.ones(
             len(observations)
-        ).astype(np.float32), # Dummy contraint function 
+        ).astype(np.float32)
+        """, # Dummy constraint function 
         show_progress=True,
         replace_checkpoint=False,
         max_budget=None, 
@@ -40,7 +42,7 @@ class Trainer:
         self.save_steps = int(save_steps)
         self.test_episodes = test_episodes
         self.discount = discount 
-        self.constraint_function = constraint_function
+        self.constraint_function = eval(constraint_function)
         self.show_progress = show_progress
         self.replace_checkpoint = replace_checkpoint
         self.max_budget = max_budget

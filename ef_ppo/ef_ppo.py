@@ -9,6 +9,7 @@ from ef_ppo import critics as critic_updaters
 from deprl.vendor.tonic.torch import updaters
 from ef_ppo.hl_segment import HLSegment
 from ef_ppo.utils import n_sect
+from deprl.dep_controller import DEP
 
 # Defaults
 def default_model():
@@ -389,3 +390,33 @@ class EF_PPO(Agent):
         """
         state_dict = torch.load(path, map_location=self.device)
         self.model.load_state_dict(state_dict)
+
+# DEP-RL EF-PPO
+class DEP_EF_PPO(EF_PPO):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.expl = self.dep = DEP()
+        self.since_switch = 500
+
+    def initialize(self, observation_space, action_space, seed=None):
+        super().initialize(observation_space, action_space, seed)
+        self.dep.initialize(observation_space, action_space, seed)
+
+    def step(
+        self, observations, steps, budgets, muscle_states=None, greedy_episode=False
+    ):
+        if greedy_episode:
+            return super().step(
+                observations, steps, budgets, muscle_states
+            )
+        self.since_switch += 1
+        dep_actions = self.dep.step(muscle_states, steps)
+        if self.since_switch > self.dep.intervention_length:
+            if np.random.uniform() < self.dep.intervention_proba:
+                self.since_switch = 0
+            return super().step(
+                observations, steps, budgets, muscle_states
+            )
+        self.last_observations = observations.copy()
+        self.last_actions = dep_actions.copy()
+        return dep_actions

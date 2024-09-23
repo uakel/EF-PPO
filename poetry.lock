@@ -445,13 +445,13 @@ tqdm = ["tqdm"]
 
 [[package]]
 name = "gait-40-dof-22-musc-sagittal"
-version = "0.1.2"
+version = "0.1.4"
 description = "OpenSim model in MuJoCo environement, addapted to only move in sagittal plane"
 optional = false
 python-versions = "<=3.11.5,>=3.10"
 files = [
-    {file = "gait_40_dof_22_musc_sagittal-0.1.2-py3-none-any.whl", hash = "sha256:26daf8866978d85b142914abda39c4b651ba367932b3e57b3f9d2beb21cd0944"},
-    {file = "gait_40_dof_22_musc_sagittal-0.1.2.tar.gz", hash = "sha256:d51311947d4f0db5ad95923f05c61fa97dbffdd9bb0736d4f2bc7c74789cbec4"},
+    {file = "gait_40_dof_22_musc_sagittal-0.1.4-py3-none-any.whl", hash = "sha256:9ca3e5d7252a3e499adaa19e5ab42ab0a3aa67220b5baa1915dfe803bf2bc3d4"},
+    {file = "gait_40_dof_22_musc_sagittal-0.1.4.tar.gz", hash = "sha256:a706e403f81944ffd8768683b4c3ea328baf5300bc2411649d855af92ac95215"},
 ]
 
 [package.dependencies]
@@ -2109,4 +2109,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10, <=3.11.5"
-content-hash = "70d4357a9f8d61063ba507eab14af69fc015656853b0bb62c63f00cd767009a8"
+content-hash = "cf9b792da03597a956f3f7ceddf740c01a5c4985e8a1a89c2258663329c1ba54"

@@ -15,7 +15,7 @@ class HLSegment(Segment):
         h_term_penalty=None,
         l_term_penalty=None
     ):
-        self.steps_before_batches = 0
+        self.steps_before_batches = -1
         self.trace_decay_sum_weights = np.array(
             [trace_decay**i for i in range(size)]
         )[::-1]

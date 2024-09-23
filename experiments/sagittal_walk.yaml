@@ -1,3 +1,4 @@
+---
 DEP:
   bias_rate: 0.002
   buffer_size: 200
@@ -16,67 +17,79 @@ DEP:
 env_args: {}
 id: 0
 tonic:
-  after_training: '' 
-  header: "import deprl, gym, myosuite, gait-40-dof-22-musc-sagittal, torch, efppo"
-  agent: '
-  deprl.custom_agents.dep_factory(6, efppo.ef_ppo.EF_PPO())(
-    replay=efppo.hl_segment.HLSegment(
-      size=512,
-      discount_factor=0.99,
-      trace_decay=0.9,
-      batch_size=128,
-      h_term_penalty=1.8,
-      l_term_penalty=2.7
-    ), 
-    model=efppo.models.HLActorCritic(
-      actor=deprl.vendor.tonic.torch.models.Actor(
-        encoder=deprl.vendor.tonic.torch.models.ObservationEncoder(),
-        torso=deprl.vendor.tonic.torch.models.MLP((256, 256), torch.nn.ReLU),
-        head=deprl.vendor.tonic.torch.models.DetachedScaleGaussianPolicyHead(),
+  after_training: None
+  header: |
+    import torch
+    global torch
+    from ef_ppo.ef_ppo import DEP_EF_PPO
+    from ef_ppo.hl_segment import HLSegment
+    from ef_ppo.models import HLActorCritic
+    from ef_ppo.hl_segment import HLSegment
+    from ef_ppo.critics import VRegression
+    from deprl.vendor.tonic.torch import models, normalizers, updaters
+    import ef_ppo, deprl, gym, myosuite, gait_40_dof_22_musc_sagittal
+  agent: |
+    DEP_EF_PPO(
+      replay=HLSegment(
+        size=512,
+        discount_factor=0.99,
+        trace_decay=0.9,
+        batch_size=128,
+        h_term_penalty=1.8,
+        l_term_penalty=2.7
+      ), 
+      model=HLActorCritic(
+        actor=models.Actor(
+          encoder=models.ObservationEncoder(),
+          torso=models.MLP((256, 256), torch.nn.ReLU),
+          head=models.DetachedScaleGaussianPolicyHead(),
+        ),
+        l_critic=models.Critic(
+          encoder=models.ObservationEncoder(),
+          torso=models.MLP((256, 256), torch.nn.ReLU),
+          head=models.ValueHead(),
+        ), 
+        h_critic=models.Critic(
+          encoder=models.ObservationEncoder(),
+          torso=models.MLP((256, 256), torch.nn.ReLU),
+          head=models.ValueHead(),
+        ), 
+        observation_normalizer=normalizers.MeanStd(), 
+      ), 
+      actor_updater=updaters.actors.ClippedRatio(
+        optimizer=lambda params: torch.optim.Adam(params, lr=3e-5),
+        entropy_coeff=0.001,
+        ratio_clip=0.20 
+      ), 
+      h_critic_updater=VRegression(
+        optimizer=lambda params: torch.optim.Adam(params, lr=4e-5),
       ),
-      l_critic=deprl.vendor.tonic.torch.models.Critic(
-        encoder=deprl.vendor.tonic.torch.models.ObservationEncoder(),
-        torso=deprl.vendor.tonic.torch.models.MLP((256, 256), torch.nn.ReLU),
-        head=deprl.vendor.tonic.torch.models.ValueHead(),
-      ), 
-      h_critic=deprl.vendor.tonic.torch.models.Critic(
-        encoder=deprl.vendor.tonic.torch.models.ObservationEncoder(),
-        torso=deprl.vendor.tonic.torch.models.MLP((256, 256), torch.nn.ReLU),
-        head=deprl.vendor.tonic.torch.models.ValueHead(),
-      ), 
-      observation_normalizer=deprl.vendor.tonic.torch.normalizers.MeanStd(), 
-    ), 
-    actor_updater=deprl.vendor.tonic.torch.updaters.actors.ClippedRatio(
-      optimizer=lambda params: torch.optim.Adam(params, lr=3e-5),
-      entropy_coeff=0.001,
-      ratio_clip=0.20 
-    ), 
-    h_critic_updater=efppo.updaters.critics.VRegression(
-      optimizer=lambda params: torch.optim.Adam(params, lr=4e-5),
-    ),
-    l_critic_updater=efppo.updaters.critics.VRegression(
-      optimizer=lambda params: torch.optim.Adam(params, lr=4e-5),
-    ),
-  )'
-  before_training: ''
+      l_critic_updater=VRegression(
+        optimizer=lambda params: torch.optim.Adam(params, lr=4e-5),
+      ),
+    )
+  before_training: None
   checkpoint: last
-  environment: deprl.environments.Gym('gait_40_dof_22_musc_sagittal-v0', scaled_actions=False, reset_type='random')
+  environment: |
+    deprl.environments.Gym('gait_40_dof_22_musc_sagittal-v0',
+                           scaled_actions=False, 
+                           reset_type='random')
   full_save: 0
   name: ef_ppo_test
-  parallel: 12
+  parallel: 16
   resume: 1
   seed: 0
   sequential: 4
   test_environment: null
-  trainer: "efppo.ef_ppo_trainer.Trainer(
-    steps=int(1e8),
-    epoch_steps=int(3 * 12e3),
-    save_steps=int(3 * 6e4),
-    test_episodes=10,
-    discount=0.99,
-    constraint_function=lambda observations, muscle_states: 
-        np.abs(observations[:, 39].flatten() * 100 - 1.2) - 0.1
-    ,
-    max_budget=2.7
-  )"
+  trainer: |
+    ef_ppo.ef_ppo_trainer.Trainer(
+      steps=int(1e8),
+      epoch_steps=int(3 * 12e3),
+      save_steps=int(3 * 6e4),
+      test_episodes=10,
+      discount=0.99,
+      constraint_function="lambda observations, muscle_states: "
+                          "np.abs(observations[:, 39].flatten() * 100 - 1.2) - 0.1",
+      max_budget=2.7
+    )
 working_dir: .
