@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from deprl.vendor.tonic.utils import logger
+from ef_ppo import logger
 from deprl.vendor.tonic.torch.agents import Agent
 from ef_ppo.models import HLActorCritic 
 from deprl.vendor.tonic.torch import models
@@ -45,7 +45,7 @@ class EF_PPO(Agent):
     """
     def __init__(self, model=None, replay=None, actor_updater=None,
                  h_critic_updater=None, l_critic_updater=None, log=True,
-                 budget_normalizer=1.0):
+                 budget_normalizer=1.0, max_budget=2.7):
         """
         Instantiate the agent.
         """
@@ -60,6 +60,7 @@ class EF_PPO(Agent):
                                 critic_updaters.VRegression()
         self.log = log
         self.budget_normalizer = budget_normalizer
+        self.max_budget = max_budget
 
 
     def initialize(self, observation_space, action_space, seed=None):
@@ -81,7 +82,8 @@ class EF_PPO(Agent):
         self.l_critic_updater.initialize(self.model.l_critic)
 
 
-    def step(self, observations, steps, budgets, muscle_states=None):
+    def step(self, observations, steps, budgets, 
+             muscle_states=None, greedy_episode=False):
         """
         Sample actions from the agent's policy and update 
         the agent's internal state.
@@ -151,13 +153,6 @@ class EF_PPO(Agent):
         # Cast to 2d
         observations = np.atleast_2d(observations)
 
-        # Check if max budget atribute has been set
-        if not hasattr(self, 'max_budget'):
-            logger.log("WARNING! the attribute 'max_budget' has not been set. "
-                       "Please set it before uning the determinisitic_opt_step"
-                       " method. Using zero as max_budget..")
-            self.max_budget = 0
-        
         # Get the maximum z by performing n-section of the value function
         fixed_obs_value = lambda budget: self._compute_v_total(
             np.repeat(observations, len(budget), axis=0),
@@ -187,13 +182,6 @@ class EF_PPO(Agent):
         # Make observations 2d
         observations = np.atleast_2d(observations)
 
-        # Check if max budget atribute has been set
-        if not hasattr(self, 'max_budget'):
-            logger.log("WARNING! the attribute 'max_budget' has not been set. "
-                       "Please set it before uning the determinisitic_opt_step"
-                       " method. Using zero as max_budget..")
-            self.max_budget = 0
-
         # Get maximum z by performing n-section of the value function
         fixed_obs_value = lambda budget: self._compute_v_total(
             np.repeat(observations, len(budget), axis=0),
@@ -205,12 +193,13 @@ class EF_PPO(Agent):
         budget_star = np.array([budget_star]) 
 
         # Return optimal action
+        
         return self._step(observations, budget_star)[0]
     
 
     def update(self, 
                observations, 
-               losses, 
+               costs, 
                resets, 
                terminations, 
                const_fn_eval, 
@@ -226,7 +215,7 @@ class EF_PPO(Agent):
             observations=self.last_observations,
             actions=self.last_actions,
             next_observations=observations,
-            losses=losses,
+            costs=costs,
             resets=resets,
             terminations=terminations,
             log_probs=self.last_log_probs,
@@ -246,7 +235,7 @@ class EF_PPO(Agent):
                 )
             )
         if self.model.return_normalizer:
-            self.model.return_normalizer.record(losses)
+            self.model.return_normalizer.record(costs)
 
         # Update the model if the replay is ready.
         if self.replay.ready():

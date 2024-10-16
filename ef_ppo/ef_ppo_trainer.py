@@ -3,15 +3,11 @@ import time
 
 import numpy as np
 import torch
-
-from deprl.custom_test_environment import (
-    test_dm_control,
-    test_scone,
-)
 from ef_ppo.test_environment import test_mujoco
 
-from deprl.vendor.tonic import logger
+from ef_ppo import logger
 from ef_ppo.ef_ppo import EF_PPO
+from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 
 if "ROBOHIVE_VERBOSITY" not in os.environ:
     os.environ["ROBOHIVE_VERBOSITY"] = "ALWAYS"
@@ -34,8 +30,9 @@ class Trainer:
         """, # Dummy constraint function 
         show_progress=True,
         replace_checkpoint=False,
-        max_budget=None, 
-    ):
+        max_budget=None,
+        data_path=lambda env: env.environments[0].sim.model
+    ): 
         # Saving the parameters
         self.max_steps = int(steps)
         self.epoch_steps = int(epoch_steps)
@@ -46,9 +43,10 @@ class Trainer:
         self.show_progress = show_progress
         self.replace_checkpoint = replace_checkpoint
         self.max_budget = max_budget
+        self.data_path = data_path
     
 
-    def determine_max_budget(self, agent, environment, init_observations, 
+    def determine_max_budget(self, init_observations, 
                              init_muscle_states, num_workers, n_episodes=100):
         # Log 
         logger.log("Max budget not given. "
@@ -76,11 +74,11 @@ class Trainer:
             # Take environment step 
             observations, muscle_states, info \
                 = self.environment.step(actions)
-            losses = info["rewards"]
+            costs = info["rewards"]
             episode_ends = info["terminations"] | info["resets"]
 
             # Return calculation
-            returns += self.discount**steps_since_last_episode_end * losses
+            returns += self.discount**steps_since_last_episode_end * costs
 
             # Increase index variables
             steps += 1
@@ -93,13 +91,14 @@ class Trainer:
                 max_return = max(max_return, max(returns[episode_ends]))
             returns[episode_ends] = 0
 
-        logger.log(f"Max budget determined as: {max_return}")
+        nogger.log(f"Max budget determined as: {max_return}")
         return max_return
 
 
     def initialize(
         self, agent, environment, 
-        test_environment=None, full_save=False
+        test_environment=None, 
+        full_save=False
     ):
         if not issubclass(type(agent), EF_PPO):
            logger.log("WARNING: You are using a non EF_PPO derived agent "
@@ -122,8 +121,6 @@ class Trainer:
         # Determine max budget empricially if not given
         if self.max_budget is None:
             self.max_budget = self.determine_max_budget(
-                self.agent,
-                self.environment,
                 observations,
                 muscle_states,
                 num_workers
@@ -138,13 +135,17 @@ class Trainer:
         budgets = np.random.uniform(low=0, 
                                     high=self.max_budget,
                                     size=num_workers).astype(np.float32)
-
-        scores = np.zeros(num_workers)
-        constraint_score = np.zeros(num_workers)
+        
+        # Create logging vars
+        cost_scores = np.zeros(num_workers)
+        constraint_scores = np.zeros(num_workers)
+        costs_since_reset = [[] for _ in range(num_workers)]
+        constraint_fn_evals_since_reset = [[] for _ in range(num_workers)]
         lengths = np.zeros(num_workers, int)
         self.steps, epoch_steps = steps, 0
         steps_since_save = 0
 
+        # Start training loop
         while True:
             # Check greedy episode
             if hasattr(self.agent, "expl"):
@@ -162,7 +163,8 @@ class Trainer:
                 observations,
                 self.steps,
                 budgets,
-                muscle_states
+                muscle_states,
+                greedy_episode=greedy_episode
             )
 
             assert not np.isnan(actions.sum())
@@ -171,19 +173,28 @@ class Trainer:
             # Take a step in the environments.
             observations, muscle_states, info \
                 = self.environment.step(actions)
-            info["losses"] = info.pop("rewards")
+
+            # Make rewards to costs
+            info["costs"] = info.pop("rewards")
+
+            # Remove env info 
             if "env_infos" in info:
                 info.pop("env_infos")
 
-            # Evaluate constraint function and get environment loss
-            losses = info["losses"]
+            # Get and log cost
+            costs = info["costs"]
+            logger.store("train/costs", costs, stats=True)
+
+            # Evaluate constraint function and get environment costs
             const_fn_eval = self.constraint_function(
                 observations, 
                 muscle_states
             )
-            budgets = np.clip((budgets - losses 
+            budgets = np.clip((budgets - costs 
                                + (1 - self.discount) * const_fn_eval)
                               / self.discount, -self.max_budget, self.max_budget)
+            
+            # Store in logger
             logger.store("train/constraint_function_evaluations", 
                          const_fn_eval, stats=True)
             logger.store("train/budgets", 
@@ -199,16 +210,19 @@ class Trainer:
             
             # Draw new budgets if termination or a reset has happened
             episode_ends = info["terminations"] | info["resets"]
-            n_ends = np.sum(episode_ends)
             budgets[episode_ends] = np.random.uniform(
                 low=0,
                 high=self.max_budget, 
                 size=budgets[episode_ends].shape
             ).astype(np.float32)
 
-            # Log
-            scores += info["losses"]
-            constraint_score += const_fn_eval
+            # Update logging variables
+            cost_scores += info["costs"]
+            constraint_scores = np.maximum(const_fn_eval, constraint_scores)
+            for i in range(num_workers):
+                costs_since_reset[i].append(info["costs"][i])
+                constraint_fn_evals_since_reset[i].append(const_fn_eval[i])
+
             lengths += 1
             self.steps += num_workers
             epoch_steps += num_workers
@@ -219,29 +233,41 @@ class Trainer:
                 logger.show_progress(
                     self.steps, self.epoch_steps, self.max_steps
                 )
-
             # Check the finished episodes.
             for i in range(num_workers):
                 if info["resets"][i]:
-                    logger.store("train/episode_score", scores[i], stats=True)
-                    logger.store("train/constraint_score", constraint_score[i],
+                    # Store undiscounted scores.
+                    logger.store("train/cost_score", cost_scores[i], stats=True)
+                    logger.store("train/constraint_score", constraint_scores[i],
                                  stats=True)
+                    # Store the discounted scores.
+                    discounted_cost_scores = discounted_cost_score(
+                        costs_since_reset[i],
+                        self.discount
+                    )
+                    for score in discounted_cost_scores:
+                        logger.store("train/discounted_cost_score", score, stats=True)
+
+                    # Store the discounted constraint scores.
+                    discounted_constraint_scores = discounted_constraint_score(
+                        constraint_fn_evals_since_reset[i], self.discount
+                    )
+                    for score in discounted_constraint_scores:
+                        logger.store("train/discounted_constraint_score", score, stats=True)
+                    
+                    # Store the episode length.
                     logger.store(
                         "train/episode_length", lengths[i], stats=True
                     )
-                    if i == 0:
-                        # adaptive energy cost
-                        if hasattr(self.agent.replay, "action_cost"):
-                            logger.store(
-                                "train/action_cost_coeff",
-                                self.agent.replay.action_cost,
-                            )
-                            self.agent.replay.adjust(scores[i])
-                    scores[i] = 0
-                    constraint_score[i] = 0
+                    # Reset the variables.
+                    cost_scores[i] = 0
+                    constraint_scores[i] = 0
+                    costs_since_reset[i] = []
+                    constraint_fn_evals_since_reset[i] = []
                     lengths[i] = 0
+                    # Increase the number of episodes.
                     episodes += 1
-
+            
             # End of the epoch.
             if epoch_steps >= self.epoch_steps:
                 # Evaluate the agent on the test environment.
@@ -250,13 +276,16 @@ class Trainer:
                                     self.agent,
                                     steps,
                                     self.constraint_function,
-                                    params)
+                                    params,
+                                    data_path=self.data_path)
 
-                # Log the data.
+                # Update some quantities
                 epochs += 1
                 current_time = time.time()
                 epoch_time = current_time - last_epoch_time
                 sps = epoch_steps / epoch_time
+
+                # Store in logger
                 logger.store("train/episodes", episodes)
                 logger.store("train/epochs", epochs)
                 logger.store("train/seconds", current_time - start_time)
@@ -265,9 +294,12 @@ class Trainer:
                 logger.store("train/steps", self.steps)
                 logger.store("train/worker_steps", self.steps // num_workers)
                 logger.store("train/steps_per_second", sps)
+
+                # Reset some variables
                 last_epoch_time = time.time()
                 epoch_steps = 0
 
+                # Complete log
                 logger.dump()
 
             # End of training.
@@ -294,7 +326,7 @@ class Trainer:
 
             if stop_training:
                 self.close_mp_envs()
-                return scores
+                return cost_scores, constraint_scores, lengths, epochs, episodes
 
 
     def close_mp_envs(self):
@@ -302,7 +334,6 @@ class Trainer:
             self.environment.processes[index].terminate()
             self.environment.action_pipes[index].close()
         self.environment.output_queue.close()
-
 
     def save_time(self, path, epochs, episodes):
         time_path = self.get_path(path, "time")

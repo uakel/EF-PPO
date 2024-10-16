@@ -1,5 +1,29 @@
 import numpy as np
 
+def discounted_cost_score(costs, discount):
+    """
+    Calculates the discounted score.
+    """
+    scores = np.zeros_like(costs)
+    carry = 0
+    for i in range(len(costs) - 1, -1, -1):
+        carry = carry * discount + costs[i]
+        scores[i] = carry
+    return scores
+
+def discounted_constraint_score(constraint_fn_evals, discount):
+    """
+    Calculates the discounted constraint score.
+    """
+    scores = np.zeros_like(constraint_fn_evals)
+    carry = 0
+    for i in range(len(constraint_fn_evals) - 1, -1, -1):
+        carry = max(constraint_fn_evals[i], 
+                    (1 - discount) * constraint_fn_evals[i] 
+                    + discount * carry)
+        scores[i] = carry
+    return scores
+
 def n_sect(function, x_min, x_max, n_iter=5, n=20):
     """
     parallel scalar root finding

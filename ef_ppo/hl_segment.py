@@ -39,7 +39,7 @@ class HLSegment(Segment):
         next_h_bootstrap
     ):
         # Get buffer characteristics 
-        shape = self.buffers["losses"].shape
+        shape = self.buffers["costs"].shape
         num_workers = shape[1] 
 
         # Reshape and save bootstraps in buffer
@@ -58,9 +58,9 @@ class HLSegment(Segment):
         Q_l = np.zeros(shape, dtype=np.float32) 
         Q_tot = np.zeros(shape, dtype=np.float32)
 
-        # Get the constraint function evaluations and losses
+        # Get the constraint function evaluations and costs
         const_fn_evals = self.buffers["const_fn_eval"]
-        losses = self.buffers["losses"]
+        costs = self.buffers["costs"]
 
         # Get budgets
         budgets = self.buffers["budgets"]
@@ -107,7 +107,7 @@ class HLSegment(Segment):
                 (1 - self.discount_factor) * const_fn_evals[t] +
                 self.discount_factor * n_step_Q_h_estimates 
             )
-            n_step_Q_l_estimates = losses[t] + \
+            n_step_Q_l_estimates = costs[t] + \
                 self.discount_factor * n_step_Q_l_estimates 
             n_step_Q_tot_estimates = np.maximum(n_step_Q_h_estimates, 
                 n_step_Q_l_estimates - budgets[t])

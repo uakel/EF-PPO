@@ -67,6 +67,7 @@ tonic:
       l_critic_updater=VRegression(
         optimizer=lambda params: torch.optim.Adam(params, lr=4e-5),
       ),
+      max_budget=2.7
     )
   before_training: None
   checkpoint: last

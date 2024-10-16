@@ -1,9 +1,9 @@
 import numpy as np
 
-from deprl.vendor.tonic import logger
+from ef_ppo import logger
+from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 
-
-def test_mujoco(env, agent, steps, constraint_function, params=None, test_episodes=10):
+def test_mujoco(env, agent, steps, constraint_function, params=None, test_episodes=10, data_path=lambda env: env.environments[0].unwrapped.sim.data):
     """
     Tests the agent on the test environment.
     """
@@ -18,17 +18,19 @@ def test_mujoco(env, agent, steps, constraint_function, params=None, test_episod
     )
 
     # Test loop.
-    for _ in range(test_episodes):
+    for ep_index in range(test_episodes):
         metrics = {
-            "test/episode_score": 0,
+            "test/cost_score": 0,
+            "test/constraint_score": 0,
             "test/episode_length": 0,
             "test/effort": 0,
             "test/terminated": 0,
-            "test/constraint_score": 0,
         }
         if eval_rwd_metrics:
             rwd_metrics = {k: [] for k in env.environments[0].rwd_dict.keys()}
 
+        costs_since_reset = []
+        constraint_function_evaluations_since_reset = []
         while True:
             # Select an action.
             actions = agent.test_step(env.test_observations, steps)
@@ -37,24 +39,65 @@ def test_mujoco(env, agent, steps, constraint_function, params=None, test_episod
 
             # Take a step in the environment.
             env.test_observations, _, info = env.step(actions)
-            const_eval = constraint_function(env.test_observations, None)
+            info["costs"] = info.pop("rewards")
+
+            # log qpos, muscle_activity, lengths and muscle_forces
+            measurements = dict(
+                qpos = env.environments[0].qpos(),
+                act = env.environments[0].muscle_activity(),
+                lengths = env.environments[0].muscle_lengths(),
+                forces = env.environments[0].muscle_forces(),
+            )
+            if ep_index < 5:
+                for quant, values in measurements.items():
+                    for i, value in enumerate(values):
+                        logger.store(f"test/{quant}/{str(i)}/{ep_index}", value, raw=True)
+
+            # Get and log cost
+            cost = info["costs"]
+            logger.store("test/costs", cost, stats=True)
+
+            # Get and log constraint function evaluations
+            const_fn_eval = constraint_function(env.test_observations, None)
+            logger.store("test/constraint_function_evaluations", 
+                         const_fn_eval, stats=True)
 
             # Update metrics
-            metrics["test/episode_score"] += info["rewards"][0]
-            metrics["test/constraint_score"] += const_eval[0]
+            metrics["test/cost_score"] += info["costs"][0]
+            metrics["test/constraint_score"] = np.maximum(const_fn_eval[0], metrics["test/constraint_score"])
             metrics["test/episode_length"] += 1
 
-            if env.environments[0].sim.model.na > 0:
-                metrics["test/effort"] += np.mean(
-                    np.square(env.environments[0].unwrapped.sim.data.act)
-                )
+            # Save the cost and constraint function evaluations in temporary lists
+            constraint_function_evaluations_since_reset.append(const_fn_eval[0])
+            costs_since_reset.append(info["costs"][0])
+
+            # Save effort
+            metrics["test/effort"] += np.mean(
+                np.square(data_path(env).act)
+            )
             metrics["test/terminated"] += int(info["terminations"])
             if eval_rwd_metrics:
                 for k, v in env.environments[0].rwd_keys_wt.items():
                     rwd_metrics[k].append(v * env.environments[0].rwd_dict[k])
 
             if info["resets"][0]:
+                # Log discounted cost and constraint function scores
+                # costs
+                discounted_cost_scores = discounted_cost_score(
+                    costs_since_reset,
+                    agent.replay.discount_factor,
+                )
+                for score in discounted_cost_scores:
+                    logger.store("test/discounted_cost_score", score, stats=True)
+                # constraints
+                discounted_constraint_scores = discounted_constraint_score(
+                    constraint_function_evaluations_since_reset,
+                    agent.replay.discount_factor,
+                )
+                for score in discounted_constraint_scores:
+                    logger.store("test/discounted_constraint_score", score, stats=True)
                 break
+
         # Log the data.Average over episode length here
         metrics["test/terminated"] /= metrics["test/episode_length"]
         metrics["test/effort"] /= metrics["test/episode_length"]
