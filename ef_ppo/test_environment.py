@@ -3,9 +3,15 @@ import numpy as np
 from ef_ppo import logger
 from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 
-def test_mujoco(env, agent, steps, constraint_function, params=None, test_episodes=10, data_path=lambda env: env.environments[0].unwrapped.sim.data):
+def test_mujoco(env, 
+                agent, 
+                steps, 
+                constraint_function, 
+                params=None, 
+                test_episodes=10, 
+                data_path=lambda env: env.environments[0].unwrapped.sim.data):
     """
-    Tests the agent on the test environment.
+    Tests the EF-PPO agent on the test environment.
     """
     # Start the environment.
     if not hasattr(env, "test_observations"):
@@ -33,29 +39,14 @@ def test_mujoco(env, agent, steps, constraint_function, params=None, test_episod
         constraint_function_evaluations_since_reset = []
         while True:
             # Select an action.
-            actions = agent.test_step(env.test_observations, steps)
+            actions, budget_star = agent.deterministic_opt_step(env.test_observations, steps)
             assert not np.isnan(actions.sum())
             logger.store("test/action", actions, stats=True)
+            logger.store("test/budget_star", budget_star, stats=True)
 
             # Take a step in the environment.
             env.test_observations, _, info = env.step(actions)
             info["costs"] = info.pop("rewards")
-
-            # log qpos, muscle_activity, lengths and muscle_forces
-            measurements = dict(
-                qpos = env.environments[0].qpos(),
-                act = env.environments[0].muscle_activity(),
-                lengths = env.environments[0].muscle_lengths(),
-                forces = env.environments[0].muscle_forces(),
-            )
-            if ep_index < 5:
-                for quant, values in measurements.items():
-                    for i, value in enumerate(values):
-                        logger.store(f"test/{quant}/{str(i)}/{ep_index}", value, raw=True)
-
-            # Get and log cost
-            cost = info["costs"]
-            logger.store("test/costs", cost, stats=True)
 
             # Get and log constraint function evaluations
             const_fn_eval = constraint_function(env.test_observations, None)
@@ -70,6 +61,27 @@ def test_mujoco(env, agent, steps, constraint_function, params=None, test_episod
             # Save the cost and constraint function evaluations in temporary lists
             constraint_function_evaluations_since_reset.append(const_fn_eval[0])
             costs_since_reset.append(info["costs"][0])
+
+            # log qpos, muscle_activity, lengths forces and constraint function evaluations
+            # for the first 5 episodes
+            measurements = dict(
+                qpos = env.environments[0].qpos(),
+                act = env.environments[0].muscle_activity(),
+                lengths = env.environments[0].muscle_lengths(),
+                forces = env.environments[0].muscle_forces(),
+            )
+            if ep_index < 5:
+                logger.store(f"test/constraint_function_evaluations/{ep_index}", const_fn_eval, raw=True)
+                logger.store(f"test/costs/{ep_index}", info["costs"], raw=True)
+                logger.store(f"test/budget_star/{ep_index}", budget_star, raw=True)
+                for quant, values in measurements.items():
+                    for i, value in enumerate(values):
+                        logger.store(f"test/{quant}/{str(i)}/{ep_index}", value, raw=True)
+
+            # Get and log cost
+            cost = info["costs"]
+            logger.store("test/costs", cost, stats=True)
+
 
             # Save effort
             metrics["test/effort"] += np.mean(

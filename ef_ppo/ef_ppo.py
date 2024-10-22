@@ -164,7 +164,7 @@ class EF_PPO(Agent):
         budget_star = np.array([budget_star])
 
         # Return the action
-        return self.deterministic_step(observations, budget_star)
+        return self.deterministic_step(observations, budget_star), budget_star
 
 
     def test_step(self, observations, steps, muscle_states=None):
