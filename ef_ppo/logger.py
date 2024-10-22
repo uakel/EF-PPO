@@ -213,6 +213,7 @@ class Logger:
                 except Exception:
                     pass
                 with open(self.log_file_path, "w") as file:
+                    file.write("!import numpy as np\n")
                     file.write(";".join(map(repr, self.final_keys)) + "\n")
                     file.write(";".join(map(repr, vals)) + "\n")
             else:
