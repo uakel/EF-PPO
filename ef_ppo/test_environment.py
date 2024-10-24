@@ -39,7 +39,7 @@ def test_mujoco(env,
         constraint_function_evaluations_since_reset = []
         while True:
             # Select an action.
-            actions, budget_star = agent.deterministic_opt_step(env.test_observations, steps)
+            actions, budget_star = agent.test_step(env.test_observations, steps)
             assert not np.isnan(actions.sum())
             logger.store("test/action", actions, stats=True)
             logger.store("test/budget_star", budget_star, stats=True)
@@ -71,9 +71,9 @@ def test_mujoco(env,
                 forces = env.environments[0].muscle_forces(),
             )
             if ep_index < 5:
-                logger.store(f"test/constraint_function_evaluations/{ep_index}", const_fn_eval, raw=True)
-                logger.store(f"test/costs/{ep_index}", info["costs"], raw=True)
-                logger.store(f"test/budget_star/{ep_index}", budget_star, raw=True)
+                logger.store(f"test/constraint_function_evaluations/{ep_index}", list(const_fn_eval), raw=True)
+                logger.store(f"test/costs/{ep_index}", list(info["costs"]), raw=True)
+                logger.store(f"test/budget_star_raw/{ep_index}", list(budget_star), raw=True)
                 for quant, values in measurements.items():
                     for i, value in enumerate(values):
                         logger.store(f"test/{quant}/{str(i)}/{ep_index}", value, raw=True)
