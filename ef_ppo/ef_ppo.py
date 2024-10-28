@@ -171,7 +171,8 @@ class EF_PPO(Agent):
         """
         Wrapper for _test_step
         """
-        return self._test_step(observations).numpy(force=True)
+        actions, budget_star = self._test_step(observations)
+        return actions.numpy(force=True), budget_star
 
 
     def _test_step(self, observations):
