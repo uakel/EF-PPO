@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from ef_ppo.test_environment import test_mujoco
 
 from ef_ppo import logger
@@ -12,9 +13,9 @@ from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 if "ROBOHIVE_VERBOSITY" not in os.environ:
     os.environ["ROBOHIVE_VERBOSITY"] = "ALWAYS"
 
-class Trainer:
+class ImitationTrainer:
     """
-    EF-PPO Trainer class
+    EF-PPO Trainer class that utilizes imitation learning
     """
     def __init__(
         self,
@@ -23,6 +24,7 @@ class Trainer:
         save_steps=5e5,
         test_episodes=20,
         discount=0.99,
+        imitation_cost_alpha=0.9999,
         constraint_function="""
         lambda observations, muscle_states: -np.ones(
             len(observations)
@@ -33,29 +35,62 @@ class Trainer:
         max_budget=None,
         data_path=lambda env: env.environments[0].sim.model,
         adaptive_budget=True,
-    ): 
+        reference_dataset_path="dataset.npz",
+        discriminator_optimizer=torch.optim.Adam,
+        optimizer_kwargs={"lr" : 0.0005},
+        weight_imitation=0.5,
+        weight_gradient_penalty=5,
+        imitation_cost_multiplier=0.005,
+        device="cuda",
+    ):
         # Saving the parameters
+        # Training routine parameters
         self.max_steps = int(steps)
         self.epoch_steps = int(epoch_steps)
         self.save_steps = int(save_steps)
         self.test_episodes = test_episodes
-        self.discount = discount 
-        self.constraint_function = eval(constraint_function)
+        self.max_budget = max_budget
+
+        # Logging and saving parameters
         self.show_progress = show_progress
         self.replace_checkpoint = replace_checkpoint
-        self.max_budget = max_budget
         self.data_path = data_path
         self.adaptive_budget = adaptive_budget
+
+        # MDP parameters
+        self.discount = discount 
+        self.constraint_function = eval(constraint_function)
+
+        # Imitation learning parameters and variables
+        self.imitation_cost_alpha = imitation_cost_alpha
+        self.current_imitation_cost_mean_estimate = 0
+        self.current_imitation_cost_var_estimate = 0
+        self.reference_dataset = np.load(reference_dataset_path)
+        self.reference_length = len(self.reference_dataset["observations"])
+        self.device = device
+        observation_dimension = self.reference_dataset["observations"].shape[1]
+        self.discriminator = self.Discriminator(
+            [observation_dimension * 2, 512, 256, 1]
+        )
+        self.discriminator_optimizer = discriminator_optimizer(
+            self.discriminator.parameters(), **optimizer_kwargs
+        )
+        self.discriminator.to(self.device)
+        self.weight_imitation = weight_imitation
+        self.weight_gradient_penalty = weight_gradient_penalty
+        self.imitation_cost_multiplier = imitation_cost_multiplier
+        self.discriminator_running_mean_and_var = np.zeros(2)
+        def mean_and_var_update(x, y):
+            add = np.array([y, (y - x[0]) ** 2])
+            return self.imitation_cost_alpha * x + (1 - self.imitation_cost_alpha) * add
+
+        self.mean_and_var_update = np.frompyfunc(mean_and_var_update, 2, 1)
 
     def initialize(
         self, agent, environment, 
         test_environment=None, 
         full_save=False
     ):
-        if not issubclass(type(agent), EF_PPO):
-           logger.log("WARNING: You are using a non EF_PPO derived agent "
-                       "together with the EF-PPO trainer.")
-
         self.agent = agent
         self.environment = environment
         self.test_environment = test_environment
@@ -108,8 +143,115 @@ class Trainer:
         logger.log(f"Max budget determined as: {max_return}")
         return max_return
 
+    class Discriminator(torch.nn.Module):
+        def __init__(self, dims, activation=torch.nn.ReLU):
+            super().__init__()
+            layers = []
+            for this_dim, next_dim in zip(dims[:-1], dims[1:]):
+                layers.append(torch.nn.Linear(this_dim, next_dim))
+                layers.append(activation())
+            layers.pop()
+            self.model = torch.nn.Sequential(*layers)
 
+        def forward(self, x):
+            return self.model(x)
 
+    def data_iterator(self, learner_dataset, batch_size=256):
+        shortest = min(self.reference_length, 
+                       len(learner_dataset["observations"]))
+        reference_indices = np.random.choice(
+            len(self.reference_dataset["observations"]), shortest, replace=False
+        )
+        learner_indices = np.random.choice(
+            len(learner_dataset["observations"]), shortest, replace=False
+        )
+        for i in range(0, shortest, batch_size):
+            reference = np.concatenate(
+                [
+                    self.reference_dataset["observations"][reference_indices[i:i+batch_size]],
+                    self.reference_dataset["next_observations"][reference_indices[i:i+batch_size]]
+                ],
+                axis=1
+            )
+            learner = np.concatenate(
+                [
+                    learner_dataset["observations"][learner_indices[i:i+batch_size]],
+                    learner_dataset["next_observations"][learner_indices[i:i+batch_size]]
+                ],
+                axis=1
+            )
+            yield (torch.tensor(reference, dtype=torch.float32).to(self.device),
+                   torch.tensor(learner, dtype=torch.float32).to(self.device))
+
+    def train_discriminator(self, learner_dataset, epochs=1, batch_size=256):
+        for _ in range(epochs):
+            # We use the confusion matrix in the following way:
+            # confusion_matrix[0, 0] = True positives, with positive being the leaner correcly identified as learner
+            # confusion_matrix[0, 1] = False positives, 
+            # confusion_matrix[1, 0] = False negatives, 
+            # confusion_matrix[1, 1] = True negatives, with negative being the reference correctly identified as reference
+            confusion_matrix = np.zeros((2, 2))
+            for reference, learner in self.data_iterator(learner_dataset, batch_size):
+                self.discriminator_optimizer.zero_grad()
+
+                reference.requires_grad = True
+                pred_reference = self.discriminator(reference)
+                grad = torch.autograd.grad(
+                    outputs=pred_reference,
+                    inputs=reference,
+                    grad_outputs=torch.ones_like(pred_reference),
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True
+                )[0]
+
+                gradient_penalty = torch.mean(torch.norm(grad, dim=1) ** 2)
+
+                pred_learner = self.discriminator(learner)
+                loss = self.weight_imitation * F.binary_cross_entropy_with_logits(pred_learner, 
+                                                                                  torch.zeros_like(pred_learner)) \
+                     + self.weight_imitation * F.binary_cross_entropy_with_logits(pred_reference, 
+                                                                                  torch.ones_like(pred_reference)) \
+                     + self.weight_gradient_penalty * gradient_penalty
+                # -> minimize pred_learner, maximize pred_reference
+                loss.backward()
+                self.discriminator_optimizer.step()
+                logger.store("train/discriminator_loss", loss.item(), stats=True)
+
+                confusion_matrix[0, 0] += (pred_learner < 0).sum().item()
+                confusion_matrix[0, 1] += (pred_learner > 0).sum().item()
+                confusion_matrix[1, 0] += (pred_reference < 0).sum().item()
+                confusion_matrix[1, 1] += (pred_reference > 0).sum().item()
+
+            logger.store("train/discriminator_confusion_matrix", confusion_matrix.flatten(), raw=True)
+
+            acc = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
+            sens = confusion_matrix[0, 0] / confusion_matrix[0].sum()
+            spec = confusion_matrix[1, 1] / confusion_matrix[1].sum()
+            F1 = 2 * sens * spec / (sens + spec)
+
+            logger.store("train/discriminator_accuracy", acc, stats=True)
+            logger.store("train/discriminator_sensitivity", sens, stats=True)
+            logger.store("train/discriminator_specificity", spec, stats=True)
+            logger.store("train/discriminator_F1", F1, stats=True)
+
+    def discriminator_cost(self, observations, next_observations):
+        concatenated = np.concatenate(
+            [observations, next_observations], axis=1
+        )
+        with torch.no_grad():
+            pred = self.discriminator(
+                torch.tensor(concatenated, dtype=torch.float32).to(self.device)
+            ).cpu().numpy().flatten()
+        self.discriminator_running_mean_and_var = self.mean_and_var_update.reduce(
+            pred, initial=self.discriminator_running_mean_and_var
+        )
+        logger.store("train/discriminator_mean", self.discriminator_running_mean_and_var[0])
+        logger.store("train/discriminator_var", self.discriminator_running_mean_and_var[1])
+        cost = -(pred - self.discriminator_running_mean_and_var[0]) / np.sqrt(
+            self.discriminator_running_mean_and_var[1]
+        )
+        return cost
 
     def run(self, params, steps=0, epochs=0, episodes=0, save=True):
         """
@@ -183,6 +325,28 @@ class Trainer:
             if "env_infos" in info:
                 info.pop("env_infos")
 
+            # Update discriminator
+            if (self.agent.replay.index + 1 == self.agent.replay.max_size or
+                self.agent.replay.index * len(observations) + 1 
+                    % self.reference_length == 0):
+                self.train_discriminator(
+                    self.agent.replay.get_full("observations", "next_observations")
+                )
+
+            # Calculate discriminator cost
+            discriminator_cost = self.discriminator_cost(
+                self.agent.last_observations,
+                observations
+            )
+
+            # Store in logger
+            logger.store("train/discriminator_cost",
+                         discriminator_cost, stats=True)
+
+            # Integrate discriminator cost
+            info["costs"] += self.imitation_cost_multiplier * discriminator_cost
+            info["costs"] /= 2
+
             # Get and log cost
             costs = info["costs"]
             logger.store("train/costs", costs, stats=True)
@@ -192,6 +356,7 @@ class Trainer:
                 observations, 
                 muscle_states
             )
+
             if self.adaptive_budget == "modified":
                 budgets = np.clip((budgets - costs) / self.discount,
                                   -self.max_budget,
