@@ -110,15 +110,18 @@ class Logger:
         self.known_keys = set()
         self.stat_keys = set()
         self.raw = set()
+        self.print = set()
         self.epoch_dict = {}
         self.width = width
         self.last_epoch_progress = None
         self.start_time = time.time()
 
-    def store(self, key, value, stats=False, raw=False):
+    def store(self, key, value, stats=False, raw=False, print=True):
         """Keeps named values during an epoch."""
 
         if key not in self.epoch_dict:
+            if print:
+                self.print.add(key)
             self.epoch_dict[key] = [value]
             if stats and not raw:
                 self.stat_keys.add(key)
@@ -139,6 +142,8 @@ class Logger:
             if key in self.stat_keys:
                 self.epoch_dict[key + "/mean"] = np.mean(values)
                 self.epoch_dict[key + "/std"] = np.std(values)
+                self.print.add(key + "/mean")
+                self.print.add(key + "/std")
                 self.epoch_dict[key + "/min"] = np.min(values)
                 self.epoch_dict[key + "/max"] = np.max(values)
                 self.epoch_dict[key + "/size"] = len(values)
@@ -176,31 +181,37 @@ class Logger:
                         known_keys.add(left_key)
                 indent = "  " * len(left_keys)
                 right_key = right_key.replace("_", " ")
-                self.console_formats.append((indent + right_key, key))
+                self.console_formats.append((indent + right_key, key,))
 
         # Display the values following the layout.
         print()
         for left, key in self.console_formats:
             if key:
-                val = self.epoch_dict.get(key)
-                str_type = str(type(val))
-                if "tensorflow" in str_type:
-                    warning(f"Logging TensorFlow tensor {key}")
-                elif "torch" in str_type:
-                    warning(f"Logging Torch tensor {key}")
-                if np.issubdtype(type(val), np.floating):
-                    right = f"{val:8.3g}"
-                elif np.issubdtype(type(val), np.integer):
-                    right = f"{val:,}"
-                elif "list" in str_type:
-                    right = str(val)[:10] + "..."
-                else:
-                    right = str(val)
-                spaces = " " * (self.width - len(left) - len(right))
-                print(left + spaces + right)
+                if key in self.print:
+                    val = self.epoch_dict.get(key)
+                    str_type = str(type(val))
+                    if "tensorflow" in str_type:
+                        warning(f"Logging TensorFlow tensor {key}")
+                    elif "torch" in str_type:
+                        warning(f"Logging Torch tensor {key}")
+                    if np.issubdtype(type(val), np.floating):
+                        right = f"{val:8.3g}"
+                    elif np.issubdtype(type(val), np.integer):
+                        right = f"{val:,}"
+                    elif "list" in str_type:
+                        right = str(val)[:10] + "..."
+                    else:
+                        right = str(val)
+                    spaces = " " * (self.width - len(left) - len(right))
+                    print(left + spaces + right)
             else:
                 spaces = " " * (self.width - len(left))
-                print(left + spaces)
+                subkeys_that_print = [
+                    subkey for subkey in self.print
+                    if left.strip().replace(" ", "_") in subkey
+                ]
+                if len(subkeys_that_print) > 0:
+                    print(left + spaces)
         print()
 
         # Save the data to the log file

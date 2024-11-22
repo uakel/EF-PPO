@@ -32,7 +32,7 @@ class ImitationTrainer:
         """, # Dummy constraint function 
         show_progress=True,
         replace_checkpoint=False,
-        max_budget=None,
+        max_budget=1,
         data_path=lambda env: env.environments[0].sim.model,
         adaptive_budget=True,
         reference_dataset_path="dataset.npz",
@@ -95,54 +95,6 @@ class ImitationTrainer:
         self.environment = environment
         self.test_environment = test_environment
 
-    def determine_max_budget(self, init_observations, 
-                             init_muscle_states, num_workers, n_episodes=100):
-        # Log 
-        logger.log("Max budget not given. "
-                   "Determining max budget empirically..") 
-
-        # Initialize some vars
-        performed_episodes = 0
-        returns = np.zeros(num_workers)
-        observations = init_observations
-        muscle_states = init_muscle_states
-        steps = 0
-        steps_since_last_episode_end = np.zeros(num_workers)
-        max_return = 0
-
-        # Calculate empirical returns
-        while performed_episodes <= n_episodes:
-            # Get actions
-            actions = self.agent.step(
-                observations,
-                steps,
-                np.zeros(num_workers).astype(np.float32),
-                muscle_states
-            )
-
-            # Take environment step 
-            observations, muscle_states, info \
-                = self.environment.step(actions)
-            costs = info["rewards"]
-            episode_ends = info["terminations"] | info["resets"]
-
-            # Return calculation
-            returns += self.discount**steps_since_last_episode_end * costs
-
-            # Increase index variables
-            steps += 1
-            steps_since_last_episode_end += 1
-
-            # Handle ending episodes
-            steps_since_last_episode_end[episode_ends] = 0
-            performed_episodes += np.sum(episode_ends)
-            if np.sum(episode_ends) > 0: 
-                max_return = max(max_return, max(returns[episode_ends]))
-            returns[episode_ends] = 0
-
-        logger.log(f"Max budget determined as: {max_return}")
-        return max_return
-
     class Discriminator(torch.nn.Module):
         def __init__(self, dims, activation=torch.nn.ReLU):
             super().__init__()
@@ -185,11 +137,6 @@ class ImitationTrainer:
 
     def train_discriminator(self, learner_dataset, epochs=1, batch_size=256):
         for _ in range(epochs):
-            # We use the confusion matrix in the following way:
-            # confusion_matrix[0, 0] = True positives, with positive being the leaner correcly identified as learner
-            # confusion_matrix[0, 1] = False positives, 
-            # confusion_matrix[1, 0] = False negatives, 
-            # confusion_matrix[1, 1] = True negatives, with negative being the reference correctly identified as reference
             confusion_matrix = np.zeros((2, 2))
             for reference, learner in self.data_iterator(learner_dataset, batch_size):
                 self.discriminator_optimizer.zero_grad()
@@ -208,32 +155,52 @@ class ImitationTrainer:
                 gradient_penalty = torch.mean(torch.norm(grad, dim=1) ** 2)
 
                 pred_learner = self.discriminator(learner)
-                loss = self.weight_imitation * F.binary_cross_entropy_with_logits(pred_learner, 
-                                                                                  torch.zeros_like(pred_learner)) \
-                     + self.weight_imitation * F.binary_cross_entropy_with_logits(pred_reference, 
-                                                                                  torch.ones_like(pred_reference)) \
+
+                loss = self.weight_imitation\
+                     * F.binary_cross_entropy_with_logits(pred_learner, 
+                                                          torch.zeros_like(pred_learner)) \
+                     + self.weight_imitation\
+                     * F.binary_cross_entropy_with_logits(pred_reference, 
+                                                          torch.ones_like(pred_reference)) \
                      + self.weight_gradient_penalty * gradient_penalty
                 # -> minimize pred_learner, maximize pred_reference
                 loss.backward()
                 self.discriminator_optimizer.step()
-                logger.store("train/discriminator_loss", loss.item(), stats=True)
 
-                confusion_matrix[0, 0] += (pred_learner < 0).sum().item()
-                confusion_matrix[0, 1] += (pred_learner > 0).sum().item()
-                confusion_matrix[1, 0] += (pred_reference < 0).sum().item()
-                confusion_matrix[1, 1] += (pred_reference > 0).sum().item()
+                with torch.no_grad():
+                    confusion_matrix[0, 0] += (pred_learner <= 0).sum().item()
+                    confusion_matrix[0, 1] += (pred_learner >= 0).sum().item()
+                    confusion_matrix[1, 0] += (pred_reference < 0).sum().item()
+                    confusion_matrix[1, 1] += (pred_reference > 0).sum().item()
 
-            logger.store("train/discriminator_confusion_matrix", confusion_matrix.flatten(), raw=True)
+                    logger.store("imitation/discriminator_training/pred_learner/mean", 
+                                 pred_learner.mean().item())
+                    logger.store("imitation/discriminator_training/pred_learner/std", 
+                                 pred_learner.std().item())
+                    logger.store("imitation/discriminator_training/pred_reference/mean",
+                                 pred_reference.mean().item())
+                    logger.store("imitation/discriminator_training/pred_reference/std",
+                                 pred_reference.std().item())
+                    logger.store("imitation/discriminator_training/loss/total", 
+                                 loss.item())
+                    logger.store("imitation/discriminator_training/loss/gradient_penalty",
+                                 gradient_penalty.item() * self.weight_gradient_penalty)
+                    logger.store("imitation/discriminator_training/loss/gradient_penalty_loss_fraction",
+                                 gradient_penalty.item() * self.weight_gradient_penalty / loss.item())
 
-            acc = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
-            sens = confusion_matrix[0, 0] / confusion_matrix[0].sum()
-            spec = confusion_matrix[1, 1] / confusion_matrix[1].sum()
-            F1 = 2 * sens * spec / (sens + spec)
 
-            logger.store("train/discriminator_accuracy", acc, stats=True)
-            logger.store("train/discriminator_sensitivity", sens, stats=True)
-            logger.store("train/discriminator_specificity", spec, stats=True)
-            logger.store("train/discriminator_F1", F1, stats=True)
+            p_corr = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
+            p_corr_learner = confusion_matrix[0, 0] / confusion_matrix[0].sum()
+            p_corr_reference = confusion_matrix[1, 1] / confusion_matrix[1].sum()
+            
+            logger.store("imitation/discriminator_training/p_corr", p_corr)
+            logger.store("imitation/discriminator_training/p_corr_learner", p_corr_learner)
+            logger.store("imitation/discriminator_training/p_corr_reference", p_corr_reference)
+            logger.store("imitation/discriminator_training/confusion_matrix", 
+                         list(confusion_matrix.flatten()), 
+                         raw=True,
+                         print=False)
+
 
     def discriminator_cost(self, observations, next_observations):
         concatenated = np.concatenate(
@@ -246,73 +213,209 @@ class ImitationTrainer:
         self.discriminator_running_mean_and_var = self.mean_and_var_update.reduce(
             pred, initial=self.discriminator_running_mean_and_var
         )
-        logger.store("train/discriminator_mean", self.discriminator_running_mean_and_var[0])
-        logger.store("train/discriminator_var", self.discriminator_running_mean_and_var[1])
         cost = -(pred - self.discriminator_running_mean_and_var[0]) / np.sqrt(
             self.discriminator_running_mean_and_var[1]
         )
+        cost = np.clip(cost, -1, 1)
+        cost = np.maximum(cost, 0)
+        cost *= self.imitation_cost_multiplier
+
+        logger.store("imitation/cost/discriminator_output/p_identified",
+                     (pred <= 0).sum() / len(pred))
+        logger.store("imitation/cost/discriminator_output/mean", pred.mean())
+        logger.store("imitation/cost/discriminator_output/std", pred.std())
+        logger.store("imitation/cost/discriminator_output_running_vars/mean",
+                     self.discriminator_running_mean_and_var[0])
+        logger.store("imitation/cost/discriminator_output_running_vars/std",
+                     np.sqrt(self.discriminator_running_mean_and_var[1]))
+        logger.store("train/cost/discriminator_cost",
+                     cost, stats=True)
         return cost
 
-    def run(self, params, steps=0, epochs=0, episodes=0, save=True):
+    def update_budget(self, costs, const_fn_evals):
+        if self.adaptive_budget == "modified":
+            self.budgets = np.clip(
+                (self.budgets - costs) / self.discount,
+                -self.max_budget,
+                self.max_budget
+            )
+        elif type(self.adaptive_budget) == bool and self.adaptive_budget:
+            self.budgets = np.clip(
+                (self.budgets - costs + (1 - self.discount) * const_fn_evals)
+                / self.discount, 
+                -self.max_budget, 
+                self.max_budget
+            )
+
+        logger.store("train/budgets", 
+                     self.budgets, 
+                     stats=True)
+
+    def draw_new_budgets(self, episode_ends):
+        self.budgets[episode_ends] = np.random.uniform(
+            low=0 if self.adaptive_budget else -self.max_budget,
+            high=self.max_budget,
+            size=self.budgets[episode_ends].shape
+        ).astype(np.float32)
+
+    def create_logging_vars(self, observations, episodes, steps, epochs):
+        self._num_workers = len(observations)
+        self._cost_scores = np.zeros(self._num_workers)
+        self._constraint_scores = np.zeros(self._num_workers)
+        self._costs_since_reset = [[] for _ in range(self._num_workers)]
+        self._constraint_fn_evals_since_reset = [[] for _ in range(self._num_workers)]
+        self._lengths = np.zeros(self._num_workers, int)
+        self._steps, self._epoch_steps = steps, 0
+        self._steps_since_save = 0
+        self._episodes = episodes
+        self._epochs = epochs
+        self._start_time = self._last_epoch_time = time.time()
+
+    def update_logging_vars(self, info, const_fn_eval):
+        self._cost_scores += info["costs"]
+        self._constraint_scores = np.maximum(const_fn_eval, self._constraint_scores)
+        for i in range(self._num_workers):
+            self._costs_since_reset[i].append(info["costs"][i])
+            self._constraint_fn_evals_since_reset[i].append(const_fn_eval[i])
+        self._lengths += 1
+        self._steps += self._num_workers
+        self._epoch_steps += self._num_workers
+        self._steps_since_save += self._num_workers
+
+    def discriminator_update_condition(self):
+        # Update the discriminator if the replay buffer is full or the reference length is reached.
+        if self.agent.replay.index + 1 == self.agent.replay.max_size:
+            logger.store("imitation/discriminator_training/p_update_trigger_is_replay_full",
+                         1)
+            return True
+        elif self.agent.replay.index * self._num_workers + 1 % self.reference_length == 0:
+            logger.store("imitation/discriminator_training/p_update_trigger_is_replay_full",
+                         0)
+            return True
+        
+    
+    def after_finished_episode(self, index):
+        # Calculate discounted scores
+        discounted_cost_scores = discounted_cost_score(
+            self._costs_since_reset[index],
+            self.discount
+        )
+        discounted_constraint_scores = discounted_constraint_score(
+            self._constraint_fn_evals_since_reset[index], self.discount
+        )
+        
+        # Store in Logger
+        logger.store("train/cost/undiscounted_cost_score", self._cost_scores[index], stats=True)
+        logger.store("train/constraint/undiscounted_constraint_score", self._constraint_scores[index], stats=True)
+        for score in discounted_cost_scores:
+            logger.store("train/cost/discounted_cost_score", score, stats=True)
+        for score in discounted_constraint_scores:
+            logger.store("train/constraint/discounted_constraint_score", score, stats=True)
+        logger.store(
+            "train/episode_length", self._lengths[index], stats=True
+        )
+
+        # Reset the variables.
+        self._cost_scores[index] = 0
+        self._constraint_scores[index] = 0
+        self._costs_since_reset[index] = []
+        self._constraint_fn_evals_since_reset[index] = []
+        self._lengths[index] = 0
+        self._episodes += 1
+
+    def after_finished_epoch(self):
+        # Update some quantities
+        self._epochs += 1
+        current_time = time.time()
+        epoch_time = current_time - self._last_epoch_time
+        sps = self._epoch_steps / epoch_time
+
+        # Store in logger
+        logger.store("train/episodes", self._episodes)
+        logger.store("train/epochs", self._epochs)
+        logger.store("train/seconds", current_time - self._start_time)
+        logger.store("train/epoch_seconds", epoch_time)
+        logger.store("train/epoch_steps", self._epoch_steps)
+        logger.store("train/steps", self._steps)
+        logger.store("train/worker_steps", self._steps // self._num_workers)
+        logger.store("train/steps_per_second", sps)
+
+        # Reset some variables
+        self._last_epoch_time = time.time()
+        self._epoch_steps = 0
+
+        # Complete log
+        logger.dump()
+
+    def after_step(self, info, discriminator_cost, const_fn_eval, actions):
+        # Update logging variables
+        self.update_logging_vars(info, const_fn_eval)
+
+        # Draw new budgets if termination or a reset has happened
+        self.draw_new_budgets(info["terminations"] | info["resets"])
+
+        # Store in Logger
+        logger.store("train/cost/total_cost",
+                     info["costs"], stats=True)
+        logger.store("train/cost/discriminator_cost_fraction",
+                     discriminator_cost / info["costs"] / 2, stats=True)
+        logger.store("train/cost/environment_costs",
+                     (info["costs"] - discriminator_cost / 2) * 2, stats=True)
+        logger.store("train/constraint/constraint_function_evaluations", 
+                     const_fn_eval, stats=True)
+        logger.store("train/action",
+                     actions, stats=True)
+
+        # Show the progress bar.
+        if self.show_progress:
+            logger.show_progress(
+                self._steps, self.epoch_steps, self.max_steps
+            )
+
+    def save_checkpoint(self):
+        path = os.path.join(logger.get_path(), "checkpoints")
+        if os.path.isdir(path) and self.replace_checkpoint:
+            for file in os.listdir(path):
+                if file.startswith("step_"):
+                    os.remove(os.path.join(path, file))
+        checkpoint_name = f"step_{self._steps}"
+        save_path = os.path.join(path, checkpoint_name)
+        # save agent checkpoint
+        self.agent.save(save_path, full_save=False)
+        # save logger checkpoint
+        logger.save(save_path)
+        # save time iteration dict
+        self.save_time(save_path, self._epochs, self._episodes)
+        self._steps_since_save = self._steps % self.save_steps
+
+    def run(self, test_params, steps=0, epochs=0, episodes=0, save=True):
         """
         Runs the main training loop.
         """
 
         # Start the environments.
         observations, muscle_states = self.environment.start()
-        num_workers = len(observations)
-
-        # Determine max budget empricially if not given
-        if self.max_budget is None:
-            self.max_budget = self.determine_max_budget(
-                observations,
-                muscle_states,
-                num_workers
-            )
+        self.create_logging_vars(observations, episodes, steps, epochs)
 
         # Set max_budget
         self.agent.max_budget = self.max_budget
 
-        # Start the actual training
-        start_time = last_epoch_time = time.time()
-        
-        budgets = np.random.uniform(low=0, 
-                                    high=self.max_budget,
-                                    size=num_workers).astype(np.float32)
-        
-        # Create logging vars
-        cost_scores = np.zeros(num_workers)
-        constraint_scores = np.zeros(num_workers)
-        costs_since_reset = [[] for _ in range(num_workers)]
-        constraint_fn_evals_since_reset = [[] for _ in range(num_workers)]
-        lengths = np.zeros(num_workers, int)
-        self.steps, epoch_steps = steps, 0
-        steps_since_save = 0
+        # initialize the budgets
+        self.budgets = np.zeros(self._num_workers, np.float32)
+        self.draw_new_budgets(np.ones(self._num_workers, bool))
 
         # Start training loop
         while True:
-            # Check greedy episode
-            if hasattr(self.agent, "expl"):
-                greedy_episode = (
-                    not episodes % self.agent.expl.test_episode_every
-                )
-            else:
-                greedy_episode = None
-
-            # Check nan observations
             assert not np.isnan(observations.sum())
             
             # Get actions
             actions = self.agent.step(
                 observations,
-                self.steps,
-                budgets,
+                self._steps,
+                self.budgets,
                 muscle_states,
-                greedy_episode=greedy_episode
             )
-
             assert not np.isnan(actions.sum())
-            logger.store("train/action", actions, stats=True)
 
             # Take a step in the environments.
             observations, muscle_states, info \
@@ -325,181 +428,67 @@ class ImitationTrainer:
             if "env_infos" in info:
                 info.pop("env_infos")
 
-            # Update discriminator
-            if (self.agent.replay.index + 1 == self.agent.replay.max_size or
-                self.agent.replay.index * len(observations) + 1 
-                    % self.reference_length == 0):
-                self.train_discriminator(
-                    self.agent.replay.get_full("observations", "next_observations")
-                )
 
-            # Calculate discriminator cost
+            # Calculate and integrate discriminator cost
             discriminator_cost = self.discriminator_cost(
                 self.agent.last_observations,
                 observations
             )
-
-            # Store in logger
-            logger.store("train/discriminator_cost",
-                         discriminator_cost, stats=True)
-
-            # Integrate discriminator cost
-            info["costs"] += self.imitation_cost_multiplier * discriminator_cost
+            info["costs"] += discriminator_cost
             info["costs"] /= 2
-
-            # Get and log cost
-            costs = info["costs"]
-            logger.store("train/costs", costs, stats=True)
 
             # Evaluate constraint function and get environment costs
             const_fn_eval = self.constraint_function(
                 observations, 
                 muscle_states
             )
+            self.update_budget(info["costs"], const_fn_eval)
 
-            if self.adaptive_budget == "modified":
-                budgets = np.clip((budgets - costs) / self.discount,
-                                  -self.max_budget,
-                                  self.max_budget)
-            elif type(self.adaptive_budget) == bool and self.adaptive_budget:
-                budgets = np.clip((budgets - costs 
-                                   + (1 - self.discount) * const_fn_eval)
-                                  / self.discount, -self.max_budget, self.max_budget)
-
-            # Store in logger
-            logger.store("train/constraint_function_evaluations", 
-                         const_fn_eval, stats=True)
-            logger.store("train/budgets", 
-                         budgets, stats=True)
 
             # Update agent
             self.agent.update(
                 **info, 
                 const_fn_eval=const_fn_eval,
-                budgets=budgets,
-                steps=self.steps
+                budgets=self.budgets,
+                steps=self._steps
             )
             
-            # Draw new budgets if termination or a reset has happened
-            episode_ends = info["terminations"] | info["resets"]
-            budgets[episode_ends] = np.random.uniform(
-                low= 0 if self.adaptive_budget else -self.max_budget,
-                high=self.max_budget, 
-                size=budgets[episode_ends].shape
-            ).astype(np.float32)
-
-            # Update logging variables
-            cost_scores += info["costs"]
-            constraint_scores = np.maximum(const_fn_eval, constraint_scores)
-            for i in range(num_workers):
-                costs_since_reset[i].append(info["costs"][i])
-                constraint_fn_evals_since_reset[i].append(const_fn_eval[i])
-
-            lengths += 1
-            self.steps += num_workers
-            epoch_steps += num_workers
-            steps_since_save += num_workers
-
-            # Show the progress bar.
-            if self.show_progress:
-                logger.show_progress(
-                    self.steps, self.epoch_steps, self.max_steps
+            # Update discriminator
+            if self.discriminator_update_condition():
+                self.train_discriminator(
+                    self.agent.replay.get_keys("observations", "next_observations")
                 )
 
-            # Check the finished episodes.
-            for i in range(num_workers):
-                if info["resets"][i]:
-                    # Store undiscounted scores.
-                    logger.store("train/cost_score", cost_scores[i], stats=True)
-                    logger.store("train/constraint_score", constraint_scores[i],
-                                 stats=True)
-                    # Store the discounted scores.
-                    discounted_cost_scores = discounted_cost_score(
-                        costs_since_reset[i],
-                        self.discount
-                    )
-                    for score in discounted_cost_scores:
-                        logger.store("train/discounted_cost_score", score, stats=True)
+            # Finish the step
+            self.after_step(info, discriminator_cost, const_fn_eval, actions)
 
-                    # Store the discounted constraint scores.
-                    discounted_constraint_scores = discounted_constraint_score(
-                        constraint_fn_evals_since_reset[i], self.discount
-                    )
-                    for score in discounted_constraint_scores:
-                        logger.store("train/discounted_constraint_score", score, stats=True)
-                    
-                    # Store the episode length.
-                    logger.store(
-                        "train/episode_length", lengths[i], stats=True
-                    )
-                    # Reset the variables.
-                    cost_scores[i] = 0
-                    constraint_scores[i] = 0
-                    costs_since_reset[i] = []
-                    constraint_fn_evals_since_reset[i] = []
-                    lengths[i] = 0
+            # Check the finished episodes.
+            for index in range(self._num_workers):
+                if info["resets"][index]:
+                    self.after_finished_episode(index)
                     # Increase the number of episodes.
-                    episodes += 1
             
             # End of the epoch.
-            if epoch_steps >= self.epoch_steps:
+            if self._epoch_steps >= self.epoch_steps:
                 # Evaluate the agent on the test environment.
                 if self.test_environment:
                     _ = test_mujoco(self.test_environment,
                                     self.agent,
-                                    steps,
+                                    self._steps,
                                     self.constraint_function,
-                                    params,
+                                    test_params,
                                     data_path=self.data_path)
-
-                # Update some quantities
-                epochs += 1
-                current_time = time.time()
-                epoch_time = current_time - last_epoch_time
-                sps = epoch_steps / epoch_time
-
-                # Store in logger
-                logger.store("train/episodes", episodes)
-                logger.store("train/epochs", epochs)
-                logger.store("train/seconds", current_time - start_time)
-                logger.store("train/epoch_seconds", epoch_time)
-                logger.store("train/epoch_steps", epoch_steps)
-                logger.store("train/steps", self.steps)
-                logger.store("train/worker_steps", self.steps // num_workers)
-                logger.store("train/steps_per_second", sps)
-
-                # Reset some variables
-                last_epoch_time = time.time()
-                epoch_steps = 0
-
-                # Complete log
-                logger.dump()
+                self.after_finished_epoch()
 
             # End of training.
-            stop_training = self.steps >= self.max_steps
-
-            # Save a checkpoint.
-            if stop_training or steps_since_save >= self.save_steps:
-                path = os.path.join(logger.get_path(), "checkpoints")
-                if os.path.isdir(path) and self.replace_checkpoint:
-                    for file in os.listdir(path):
-                        if file.startswith("step_"):
-                            os.remove(os.path.join(path, file))
-                checkpoint_name = f"step_{self.steps}"
-                save_path = os.path.join(path, checkpoint_name)
-                if save:
-                    # save agent checkpoint
-                    self.agent.save(save_path, full_save=False)
-                    # save logger checkpoint
-                    logger.save(save_path)
-                    # save time iteration dict
-                    self.save_time(save_path, epochs, episodes)
-                    steps_since_save = self.steps % self.save_steps
-                current_time = time.time()
+            stop_training = self._steps >= self.max_steps
+            if stop_training or self._steps_since_save >= self.save_steps and save:
+                # Save a checkpoint
+                self.save_checkpoint()
 
             if stop_training:
                 self.close_mp_envs()
-                return cost_scores, constraint_scores, lengths, epochs, episodes
+                return self._cost_scores, self._constraint_scores, self._lengths, self._epochs, self._episodes
 
 
     def close_mp_envs(self):
@@ -513,7 +502,7 @@ class ImitationTrainer:
         time_dict = {
             "epochs": epochs,
             "episodes": episodes,
-            "steps": self.steps,
+            "steps": self._steps,
         }
         torch.save(time_dict, time_path)
 
