@@ -3,9 +3,7 @@ import time
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-from ef_ppo.test_environment import test_mujoco
-
+from ef_ppo.discriminator import Discriminator
 from ef_ppo import logger
 from ef_ppo.ef_ppo import EF_PPO
 from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
@@ -19,90 +17,101 @@ class ImitationTrainer:
     """
     def __init__(
         self,
-        steps=1e7,
+        # Training routine parameters
+        device="cuda",
+        max_steps=1e7,
         epoch_steps=2e4,
-        save_steps=5e5,
+        save_steps=2e4 * 5,
         test_episodes=20,
-        discount=0.99,
-        imitation_cost_alpha=0.9999,
+
+        # Logging and saving parameters
+        show_progress=True,
+        replace_checkpoint=False,
+        data_path=lambda env: env.environments[0].sim.model,
+
+        # Testing parameters
+        test_hook = "ef_ppo.test_mujoco_with_muscles:test",
+
+        # Constraint learning parameters
+        max_budget=1,
+        adaptive_budget=True,
         constraint_function="""
         lambda observations, muscle_states: -np.ones(
             len(observations)
         ).astype(np.float32)
         """, # Dummy constraint function 
-        show_progress=True,
-        test_mode="mujoco_w_muscles",
-        replace_checkpoint=False,
-        max_budget=1,
-        data_path=lambda env: env.environments[0].sim.model,
-        adaptive_budget=True,
+
+        # MDP parameters
+        discount=0.99,
+
+        # Imitation learning parameters
+        ## Imitation cost parameters
+        standarize_discriminator_output=False,
+        exponential_mean_discounting=0.9999,
+        imitation_cost_multiplier=0.1,
+
+        ## Reference dataset
         reference_dataset_path="dataset.npz",
+
+        ## Discriminator Training
         discriminator_optimizer=torch.optim.Adam,
         optimizer_kwargs={"lr" : 1e-4},
         weight_imitation=0.5,
-        weight_gradient_penalty=5,
-        imitation_cost_multiplier=0.1,
-        device="cuda",
+        weight_gradient_penalty=0,
         discriminator_steps=8,
-        standarize_discriminator_output=False,
-        update_discriminator_every=16,
-        enable_gradient_penalty=False,
-        all_trajectories=False,
+        update_frozen_discriminator_every=1,
+        use_all_trajectories=False,
     ):
         # Saving the parameters
         # Training routine parameters
-        self.max_steps = int(steps)
+        self.device = device
+        self.max_steps = int(max_steps)
         self.epoch_steps = int(epoch_steps)
         self.save_steps = int(save_steps)
         self.test_episodes = test_episodes
-        self.max_budget = max_budget
 
         # Logging and saving parameters
         self.show_progress = show_progress
         self.replace_checkpoint = replace_checkpoint
         self.data_path = data_path
+        
+        # Testing parameters
+        module_name, test_fn = test_hook.split(":")
+        namespace = {}
+        exec(f"from {module_name} import {test_fn} as evaluated_test_fn", namespace)
+        self.test_fn = namespace["evaluated_test_fn"]
+
+        # Constraint learning parameters
+        self.max_budget = max_budget
         self.adaptive_budget = adaptive_budget
-        self.test_mode = test_mode
+        self.constraint_function = eval(constraint_function)
 
         # MDP parameters
         self.discount = discount 
-        self.constraint_function = eval(constraint_function)
 
         # Imitation learning parameters and variables
-        self.imitation_cost_alpha = imitation_cost_alpha
-        self.current_imitation_cost_mean_estimate = 0
-        self.current_imitation_cost_var_estimate = 0
+        ## Reference dataset
         self.reference_dataset = np.load(reference_dataset_path)
         self.reference_length = len(self.reference_dataset["observations"])
-        self.device = device
-        observation_dimension = self.reference_dataset["observations"].shape[1]
-        self.discriminator = self.Discriminator(
-            [observation_dimension * 2, 512, 256, 1]
-        )
-        self.discriminator_optimizer = discriminator_optimizer(
-            self.discriminator.parameters(), **optimizer_kwargs
-        )
-        self.discriminator.to(self.device)
-        self.frozen_discriminator = self.Discriminator(
-            [observation_dimension * 2, 512, 256, 1]
-        ).to(self.device)
-        self.frozen_discriminator.load_state_dict(self.discriminator.state_dict())
 
-        self.weight_imitation = weight_imitation
-        self.weight_gradient_penalty = weight_gradient_penalty
-        self.imitation_cost_multiplier = imitation_cost_multiplier
-        self.discriminator_running_mean_and_var = np.zeros(2)
-        def mean_and_var_update(x, y):
-            add = np.array([y, (y - x[0]) ** 2])
-            return self.imitation_cost_alpha * x + (1 - self.imitation_cost_alpha) * add
+        ## Discriminator
+        self.discriminator = Discriminator(
+            self.reference_dataset,
+            [512, 256],
+            standarize_output=standarize_discriminator_output,
+            exponential_mean_discounting=exponential_mean_discounting,
+            imitation_cost_multiplier=imitation_cost_multiplier,
+            optimizer=discriminator_optimizer,
+            optimizer_kwargs=optimizer_kwargs,
+            weight_imitation=weight_imitation,
+            weight_gradient_penalty=weight_gradient_penalty,
+            gradient_steps=discriminator_steps,
+            update_frozen_every=update_frozen_discriminator_every,
+            device=device,
+        )
 
-        self.mean_and_var_update = np.frompyfunc(mean_and_var_update, 2, 1)
-        self.standarize_discriminator_output = standarize_discriminator_output
-        self.discriminator_steps = discriminator_steps
-        self.n_discriminator_updates = 0
-        self.update_discriminator_every = update_discriminator_every
-        self.enable_gradient_penalty = enable_gradient_penalty
-        self.all_trajectories = all_trajectories
+        ## Discriminator Training
+        self.use_all_trajectories = use_all_trajectories
 
     def initialize(
         self, agent, environment, 
@@ -112,156 +121,6 @@ class ImitationTrainer:
         self.agent = agent
         self.environment = environment
         self.test_environment = test_environment
-
-    class Discriminator(torch.nn.Module):
-        def __init__(self, dims, activation=torch.nn.ReLU):
-            super().__init__()
-            layers = []
-            for this_dim, next_dim in zip(dims[:-1], dims[1:]):
-                layers.append(torch.nn.Linear(this_dim, next_dim))
-                layers.append(activation())
-            layers.pop()
-            self.model = torch.nn.Sequential(*layers)
-
-        def forward(self, x):
-            return self.model(x)
-
-    def data_iterator(self, learner_dataset, batch_size=256):
-        shortest = min(self.reference_length, 
-                       len(learner_dataset["observations"]))
-        reference_indices = np.random.choice(
-            len(self.reference_dataset["observations"]), shortest, replace=False
-        )
-        learner_indices = np.random.choice(
-            len(learner_dataset["observations"]), shortest, replace=False
-        )
-        for i in range(0, shortest, batch_size):
-            reference = np.concatenate(
-                [
-                    self.reference_dataset["observations"][reference_indices[i:i+batch_size]],
-                    self.reference_dataset["next_observations"][reference_indices[i:i+batch_size]]
-                ],
-                axis=1
-            )
-            learner = np.concatenate(
-                [
-                    learner_dataset["observations"][learner_indices[i:i+batch_size]],
-                    learner_dataset["next_observations"][learner_indices[i:i+batch_size]]
-                ],
-                axis=1
-            )
-            yield (torch.tensor(reference, dtype=torch.float32).to(self.device),
-                   torch.tensor(learner, dtype=torch.float32).to(self.device))
-
-    def train_discriminator(self, learner_dataset, epochs=1, batch_size=128):
-        self.n_discriminator_updates += 1
-        for _ in range(epochs):
-            confusion_matrix = np.zeros((2, 2))
-            it = 0
-            for reference, learner in self.data_iterator(learner_dataset, batch_size):
-                if it >= self.discriminator_steps:
-                    break
-                self.discriminator_optimizer.zero_grad()
-
-                reference.requires_grad = True
-                pred_reference = self.discriminator(reference)
-                grad = torch.autograd.grad(
-                    outputs=pred_reference,
-                    inputs=reference,
-                    grad_outputs=torch.ones_like(pred_reference),
-                    create_graph=True,
-                    retain_graph=True,
-                    only_inputs=True
-                )[0]
-
-                if self.enable_gradient_penalty:
-                    gradient_penalty = torch.mean(torch.norm(grad, dim=1) ** 2)
-
-                pred_learner = self.discriminator(learner)
-
-                loss = self.weight_imitation\
-                     * F.binary_cross_entropy_with_logits(pred_learner, 
-                                                          torch.zeros_like(pred_learner)) \
-                     + self.weight_imitation\
-                     * F.binary_cross_entropy_with_logits(pred_reference, 
-                                                          torch.ones_like(pred_reference)) \
-                     + (self.weight_gradient_penalty * gradient_penalty
-                        if self.enable_gradient_penalty else 0)
-                # -> minimize pred_learner, maximize pred_reference
-                loss.backward()
-                self.discriminator_optimizer.step()
-
-                with torch.no_grad():
-                    confusion_matrix[0, 0] += (pred_learner <= 0).sum().item()
-                    confusion_matrix[0, 1] += (pred_learner >= 0).sum().item()
-                    confusion_matrix[1, 0] += (pred_reference < 0).sum().item()
-                    confusion_matrix[1, 1] += (pred_reference > 0).sum().item()
-
-                    logger.store("imitation/discriminator_training/pred_learner/mean", 
-                                 pred_learner.mean().item())
-                    logger.store("imitation/discriminator_training/pred_learner/std", 
-                                 pred_learner.std().item())
-                    logger.store("imitation/discriminator_training/pred_reference/mean",
-                                 pred_reference.mean().item())
-                    logger.store("imitation/discriminator_training/pred_reference/std",
-                                 pred_reference.std().item())
-                    logger.store("imitation/discriminator_training/loss/total", 
-                                 loss.item())
-                    if self.enable_gradient_penalty:
-                        logger.store("imitation/discriminator_training/loss/gradient_penalty",
-                                     gradient_penalty.item() * self.weight_gradient_penalty)
-                        logger.store("imitation/discriminator_training/loss/gradient_penalty_loss_fraction",
-                                     gradient_penalty.item() * self.weight_gradient_penalty / loss.item())
-
-
-            p_corr = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
-            p_corr_learner = confusion_matrix[0, 0] / confusion_matrix[0].sum()
-            p_corr_reference = confusion_matrix[1, 1] / confusion_matrix[1].sum()
-            
-            logger.store("imitation/discriminator_training/p_corr", p_corr)
-            logger.store("imitation/discriminator_training/p_corr_learner", p_corr_learner)
-            logger.store("imitation/discriminator_training/p_corr_reference", p_corr_reference)
-            logger.store("imitation/discriminator_training/confusion_matrix", 
-                         list(confusion_matrix.flatten()), 
-                         raw=True,
-                         print=False)
-
-            it += 1
-        if self.n_discriminator_updates % self.update_discriminator_every == 0:
-            self.frozen_discriminator.load_state_dict(self.discriminator.state_dict())
-
-    def discriminator_cost(self, observations, next_observations):
-        concatenated = np.concatenate(
-            [observations, next_observations], axis=1
-        )
-        with torch.no_grad():
-            pred = self.frozen_discriminator(
-                torch.tensor(concatenated, dtype=torch.float32).to(self.device)
-            ).cpu().numpy().flatten()
-        self.discriminator_running_mean_and_var = self.mean_and_var_update.reduce(
-            pred, initial=self.discriminator_running_mean_and_var
-        )
-        if self.standarize_discriminator_output:
-            cost = -(pred - self.discriminator_running_mean_and_var[0]) / np.sqrt(
-            self.discriminator_running_mean_and_var[1]
-        )
-        else:
-            cost = -pred
-        cost = np.maximum(cost, 0)
-        cost = np.clip(cost, -1, 1)
-        cost *= self.imitation_cost_multiplier
-
-        logger.store("imitation/cost/discriminator_output/p_identified",
-                     (pred <= 0).sum() / len(pred))
-        logger.store("imitation/cost/discriminator_output/mean", pred.mean())
-        logger.store("imitation/cost/discriminator_output/std", pred.std())
-        logger.store("imitation/cost/discriminator_output_running_vars/mean",
-                     self.discriminator_running_mean_and_var[0])
-        logger.store("imitation/cost/discriminator_output_running_vars/std",
-                     np.sqrt(self.discriminator_running_mean_and_var[1]))
-        logger.store("train/cost/discriminator_cost",
-                     cost, stats=True)
-        return cost
 
     def update_budget(self, costs, const_fn_evals):
         if self.adaptive_budget == "modified":
@@ -277,7 +136,6 @@ class ImitationTrainer:
                 -self.max_budget, 
                 self.max_budget
             )
-
         logger.store("train/budgets", 
                      self.budgets, 
                      stats=True)
@@ -325,7 +183,6 @@ class ImitationTrainer:
             logger.store("imitation/discriminator_training/p_update_trigger_is_replay_full",
                          0)
             return True
-        
     
     def after_finished_episode(self, index):
         # Calculate discounted scores
@@ -391,9 +248,9 @@ class ImitationTrainer:
         logger.store("train/cost/total_cost",
                      info["costs"], stats=True)
         logger.store("train/cost/discriminator_cost_fraction",
-                     discriminator_cost / info["costs"] / 2, stats=True)
+                     discriminator_cost / info["costs"], stats=True)
         logger.store("train/cost/environment_costs",
-                     (info["costs"] - discriminator_cost / 2) * 2, stats=True)
+                     info["costs"] - discriminator_cost, stats=True)
         logger.store("train/constraint/constraint_function_evaluations", 
                      const_fn_eval, stats=True)
         logger.store("train/action",
@@ -422,19 +279,18 @@ class ImitationTrainer:
         self._steps_since_save = self._steps % self.save_steps
 
     def test(self, env, agent, steps, const_fn, test_params, data_path):
-        if self.test_mode == "mujoco_w_muscles":
-            test_mujoco(env,
-                        agent,
-                        steps,
-                        const_fn,
-                        test_params,
-                        data_path=data_path)
+        self.test_fn(env,
+                     agent, 
+                     steps, 
+                     const_fn, 
+                     test_params, 
+                     data_path=data_path, 
+                     test_episodes=self.test_episodes)
 
     def run(self, test_params, steps=0, epochs=0, episodes=0, save=True):
         """
         Runs the main training loop.
         """
-
         # Start the environments.
         observations, muscle_states = self.environment.start()
         self.create_logging_vars(observations, episodes, steps, epochs)
@@ -472,12 +328,11 @@ class ImitationTrainer:
 
 
             # Calculate and integrate discriminator cost
-            discriminator_cost = self.discriminator_cost(
+            discriminator_cost = self.discriminator.cost(
                 self.agent.last_observations,
                 observations
             )
             info["costs"] += discriminator_cost
-            info["costs"] /= 2
 
             # Evaluate constraint function and get environment costs
             const_fn_eval = self.constraint_function(
@@ -485,7 +340,6 @@ class ImitationTrainer:
                 muscle_states
             )
             self.update_budget(info["costs"], const_fn_eval)
-
 
             # Update agent
             self.agent.update(
@@ -497,12 +351,12 @@ class ImitationTrainer:
             
             # Update discriminator
             if self.discriminator_update_condition():
-                if self.all_trajectories:
-                    self.train_discriminator(
+                if self.use_all_trajectories:
+                    self.discriminator.update(
                         self.agent.replay.get_keys_from_entire_histroy("observations", "next_observations")
                     )
                 else:
-                    self.train_discriminator(
+                    self.discriminator.update(
                         self.agent.replay.get_keys_from_current_segment("observations", "next_observations")
                     )
 
@@ -537,7 +391,6 @@ class ImitationTrainer:
                 self.close_mp_envs()
                 return self._cost_scores, self._constraint_scores, self._lengths, self._epochs, self._episodes
 
-
     def close_mp_envs(self):
         for index in range(len(self.environment.processes)):
             self.environment.processes[index].terminate()
@@ -552,7 +405,6 @@ class ImitationTrainer:
             "steps": self._steps,
         }
         torch.save(time_dict, time_path)
-
 
     def get_path(self, path, post_fix):
         return path.split("step")[0] + post_fix + ".pt"

@@ -3,13 +3,13 @@ import numpy as np
 from ef_ppo import logger
 from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 
-def test_mujoco(env, 
-                agent, 
-                steps, 
-                constraint_function, 
-                params=None, 
-                test_episodes=10, 
-                data_path=lambda env: env.environments[0].unwrapped.sim.data):
+def test(env, 
+         agent, 
+         steps, 
+         constraint_function, 
+         params=None, 
+         test_episodes=10, 
+         data_path=lambda env: env.environments[0].unwrapped.sim.data):
     """
     Tests the EF-PPO agent on the test environment.
     """
@@ -125,4 +125,3 @@ def test_mujoco(env,
         # average over episodes in logger
         for k, v in metrics.items():
             logger.store(k, v, stats=True)
-    return metrics

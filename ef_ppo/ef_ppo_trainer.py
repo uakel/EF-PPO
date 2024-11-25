@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 import torch
-from ef_ppo.test_environment import test_mujoco
+from ef_ppo.test_mujoco_with_muscles import test as test_mujoco
 
 from ef_ppo import logger
 from ef_ppo.ef_ppo import EF_PPO

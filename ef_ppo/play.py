@@ -83,8 +83,9 @@ def play_gym(agent, environment, deterministic, budget, num_episodes, no_render)
                 ), budget
             else:
                 actions, budget_star = agent.deterministic_step(
-                    observations, np.atleast_1d(float(budget)),
+                    np.atleast_2d(observations), np.atleast_1d(float(budget)),
                 ), budget
+                actions = actions.numpy().flatten()
         if len(actions.shape) > 1:
             actions = actions[0, :]
         observations, reward, done, info = environment.step(actions)
