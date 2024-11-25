@@ -1,5 +1,6 @@
 from deprl.vendor.tonic.replays.segments import Segment
 import numpy as np
+from deprl.vendor.tonic.replays.utils import flatten_batch
 
 class HLSegment(Segment):
     """
@@ -12,6 +13,7 @@ class HLSegment(Segment):
         batch_size=None,
         discount_factor=0.97,
         trace_decay=0.95,
+        long_term_buffers_size=1_000_000,
         h_term_penalty=None,
         l_term_penalty=None
     ):
@@ -22,6 +24,10 @@ class HLSegment(Segment):
         self.h_term_penalty = h_term_penalty
         self.l_term_penalty = l_term_penalty
 
+        self.long_term_buffers_size = long_term_buffers_size
+        self.long_term_buffers = {}
+        self.long_term_buffer_index = 0
+
         super().__init__(
             size=size,
             batch_iterations=batch_iterations,
@@ -30,6 +36,30 @@ class HLSegment(Segment):
             trace_decay=trace_decay
         )
 
+    def get_keys_from_entire_histroy(self, *keys):
+        return {k: flatten_batch(self.long_term_buffers[k]) for k in keys}
+
+    def get_keys_from_current_segment(self, *keys):
+        return {k: flatten_batch(self.buffers[k]) for k in keys}
+
+    def get_full(self, *keys):
+        len_addition = 0
+        for key, value in self.buffers.items():
+            len_addition = len(value)
+            if key not in self.long_term_buffers:
+                self.long_term_buffers[key] = value        
+            else:
+                if len(self.long_term_buffers[key]) <= self.long_term_buffers_size:
+                    self.long_term_buffers[key] = np.concatenate(
+                        (self.long_term_buffers[key], value), axis=0
+                    )
+                else:
+                    self.long_term_buffers[key][self.long_term_buffer_index:
+                                               self.long_term_buffer_index + len_addition] = value
+        self.long_term_buffer_index += len_addition
+        if self.long_term_buffer_index >= self.long_term_buffers_size:
+            self.long_term_buffer_index = 0
+        return super().get_full(*keys)
 
     def compute_GAEs(
         self,
