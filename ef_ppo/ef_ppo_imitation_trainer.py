@@ -46,9 +46,10 @@ class ImitationTrainer:
 
         # Imitation learning parameters
         ## Imitation cost parameters
-        standarize_discriminator_output=False,
+        standardize_discriminator_output=False,
         exponential_mean_discounting=0.9999,
         imitation_cost_multiplier=0.1,
+        clip=False,
 
         ## Reference dataset
         reference_dataset_path="dataset.npz",
@@ -98,7 +99,7 @@ class ImitationTrainer:
         self.discriminator = Discriminator(
             self.reference_dataset,
             [512, 256],
-            standarize_output=standarize_discriminator_output,
+            standarize_output=standardize_discriminator_output,
             exponential_mean_discounting=exponential_mean_discounting,
             imitation_cost_multiplier=imitation_cost_multiplier,
             optimizer=discriminator_optimizer,
@@ -107,6 +108,7 @@ class ImitationTrainer:
             weight_gradient_penalty=weight_gradient_penalty,
             gradient_steps=discriminator_steps,
             update_frozen_every=update_frozen_discriminator_every,
+            clip=clip,
             device=device,
         )
 

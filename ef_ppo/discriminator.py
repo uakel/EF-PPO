@@ -34,6 +34,7 @@ class Discriminator():
                  weight_gradient_penalty=0,
                  gradient_steps=8,
                  update_frozen_every=1,
+                 clip=False,
                  device="cpu",
                  ):
         # Reference dataset
@@ -77,6 +78,7 @@ class Discriminator():
         self.gradient_steps = gradient_steps
         self.n_discriminator_updates = 0
         self.update_frozen_every = update_frozen_every
+        self.clip = clip
 
         self.device = device
 
@@ -201,7 +203,8 @@ class Discriminator():
             initial=self.output_running_mean_and_var
         )
         cost = np.maximum(cost, 0) 
-        cost = np.clip(cost, -1, 1)
+        if self.clip:
+            cost = np.clip(cost, -1, 1)
         cost *= self.imitation_cost_multiplier
 
         logger.store("imitation/cost/discriminator_output/p_identified",
