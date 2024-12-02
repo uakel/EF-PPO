@@ -101,7 +101,7 @@ class ImitationTrainer:
         self.discriminator = Discriminator(
             self.reference_dataset,
             [512, 256],
-            standarize_output=standardize_discriminator_output,
+            standardize_output=standardize_discriminator_output,
             exponential_mean_discounting=exponential_mean_discounting,
             imitation_cost_multiplier=imitation_cost_multiplier,
             optimizer=discriminator_optimizer,

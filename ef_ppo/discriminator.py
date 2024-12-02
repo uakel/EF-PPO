@@ -24,7 +24,7 @@ class Discriminator():
     def __init__(self, 
                  reference_dataset, 
                  hidden_dims,
-                 standarize_output: bool=False,
+                 standardize_output=False,
                  exponential_mean_discounting=0.9999,
                  imitation_cost_multiplier=1.0,
                  activation=torch.nn.ReLU,
@@ -57,7 +57,7 @@ class Discriminator():
         self.frozen_regressor.load_state_dict(self.regressor.state_dict())
 
         # Standartization of the discriminator output
-        self.standarize_output: bool = standarize_output
+        self.standardize_output = standardize_output
         self.exponential_mean_discounting = exponential_mean_discounting
         self.output_running_mean_and_var = np.ones(2)
         def mean_and_var_update(mean_and_var: np.ndarray,
@@ -193,7 +193,17 @@ class Discriminator():
             pred  = self.frozen_regressor(
                 torch.tensor(concatenated, dtype=torch.float32).to(self.device)
             ).cpu().numpy().flatten()
-        if self.standarize_output:
+        if type(self.standardize_output) == str and self.standardize_output == "fancy":
+            cost = np.maximum(
+                -0.005 * (pred - self.output_running_mean_and_var[0]) / 
+                    np.sqrt(
+                        self.output_running_mean_and_var[1] 
+                    ) + np.minimum(0.005, -0.005 * self.output_running_mean_and_var[0] / np.sqrt(
+                        self.output_running_mean_and_var[1] 
+                    )),
+                0
+            )
+        elif type(self.standardize_output) == bool and self.standardize_output:
             cost = -(pred - self.output_running_mean_and_var[0]) / np.sqrt(
             self.output_running_mean_and_var[1]
         )
