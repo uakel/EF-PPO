@@ -30,6 +30,7 @@ class Discriminator():
                  activation=torch.nn.ReLU,
                  optimizer=torch.optim.Adam,
                  optimizer_kwargs={"lr": 1e-4},
+                 batch_size=32,
                  weight_imitation=1.0,
                  weight_gradient_penalty=0,
                  gradient_steps=8,
@@ -58,7 +59,7 @@ class Discriminator():
         # Standartization of the discriminator output
         self.standarize_output: bool = standarize_output
         self.exponential_mean_discounting = exponential_mean_discounting
-        self.output_running_mean_and_var = np.zeros(2)
+        self.output_running_mean_and_var = np.ones(2)
         def mean_and_var_update(mean_and_var: np.ndarray,
                                 y: float) -> np.ndarray:
             add = np.array([y, (y - mean_and_var[0]) ** 2])
@@ -73,6 +74,7 @@ class Discriminator():
             self.regressor.parameters(),
             **optimizer_kwargs
         )
+        self.batch_size = batch_size
         self.weight_imitation = weight_imitation
         self.weight_gradient_penalty = weight_gradient_penalty
         self.gradient_steps = gradient_steps
@@ -109,12 +111,12 @@ class Discriminator():
             yield (torch.tensor(reference, dtype=torch.float32).to(self.device),
                    torch.tensor(learner, dtype=torch.float32).to(self.device))
 
-    def update(self, learner_dataset, epochs=1, batch_size=128):
+    def update(self, learner_dataset, epochs=1):
         self.n_discriminator_updates += 1
         for _ in range(epochs):
             confusion_matrix = np.zeros((2, 2))
             it = 0
-            for reference, learner in self.data_iterator(learner_dataset, batch_size):
+            for reference, learner in self.data_iterator(learner_dataset, self.batch_size):
                 if it >= self.gradient_steps:
                     break
                 self.optimizer.zero_grad()
@@ -166,6 +168,7 @@ class Discriminator():
                     logger.store("imitation/discriminator_training/loss/gradient_penalty_loss_fraction",
                                  gradient_penalty.item() * self.weight_gradient_penalty / loss.item())
 
+                it += 1
 
             p_corr = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
             p_corr_learner = confusion_matrix[0, 0] / confusion_matrix[0].sum()
@@ -179,7 +182,6 @@ class Discriminator():
                          raw=True,
                          print=False)
 
-            it += 1
         if self.n_discriminator_updates % self.update_frozen_every == 0:
             self.frozen_regressor.load_state_dict(self.regressor.state_dict())
     
@@ -209,8 +211,7 @@ class Discriminator():
 
         logger.store("imitation/cost/discriminator_output/p_identified",
                      (pred <= 0).sum() / len(pred))
-        logger.store("imitation/cost/discriminator_output/mean", pred.mean())
-        logger.store("imitation/cost/discriminator_output/std", pred.std())
+        logger.store("imitation/cost/discriminator_output", pred, stats=True)
         logger.store("imitation/cost/discriminator_output_running_vars/mean",
                      self.output_running_mean_and_var[0])
         logger.store("imitation/cost/discriminator_output_running_vars/std",

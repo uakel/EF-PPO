@@ -33,16 +33,16 @@ class ImitationTrainer:
         test_hook = "ef_ppo.test_mujoco_with_muscles:test",
 
         # Constraint learning parameters
-        max_budget=1,
+        max_budget=0,
         adaptive_budget=True,
-        constraint_function="""
-        lambda observations, muscle_states: -np.ones(
-            len(observations)
-        ).astype(np.float32)
-        """, # Dummy constraint function 
+        constraint_function=
+        "lambda observations, muscle_states: -np.ones("
+            "len(observations)"
+        ").astype(np.float32)", # Dummy constraint function 
 
         # MDP parameters
         discount=0.99,
+        environment_cost_multiplier=1,
 
         # Imitation learning parameters
         ## Imitation cost parameters
@@ -57,9 +57,10 @@ class ImitationTrainer:
         ## Discriminator Training
         discriminator_optimizer=torch.optim.Adam,
         optimizer_kwargs={"lr" : 1e-4},
+        discriminator_batch_size=128,
         weight_imitation=0.5,
         weight_gradient_penalty=0,
-        discriminator_steps=8,
+        discriminator_steps=float("inf"),
         update_frozen_discriminator_every=1,
         use_all_trajectories=False,
     ):
@@ -89,6 +90,7 @@ class ImitationTrainer:
 
         # MDP parameters
         self.discount = discount 
+        self.environment_cost_multiplier = environment_cost_multiplier
 
         # Imitation learning parameters and variables
         ## Reference dataset
@@ -104,6 +106,7 @@ class ImitationTrainer:
             imitation_cost_multiplier=imitation_cost_multiplier,
             optimizer=discriminator_optimizer,
             optimizer_kwargs=optimizer_kwargs,
+            batch_size=discriminator_batch_size,
             weight_imitation=weight_imitation,
             weight_gradient_penalty=weight_gradient_penalty,
             gradient_steps=discriminator_steps,
@@ -334,6 +337,7 @@ class ImitationTrainer:
                 self.agent.last_observations,
                 observations
             )
+            info["costs"] *= self.environment_cost_multiplier
             info["costs"] += discriminator_cost
 
             # Evaluate constraint function and get environment costs
