@@ -178,8 +178,8 @@ class ImitationTrainer:
 
     def discriminator_update_condition(self):
         # Update the discriminator if the replay buffer is full or the reference length is reached.
-        if self.agent.replay.long_term_buffer_index == 0:
-            return False
+        # if self.agent.replay.long_term_buffer_index == 0:
+        #     return False
         if self.agent.replay.index == 0:
             logger.store("imitation/discriminator_training/p_update_trigger_is_replay_full",
                          1)

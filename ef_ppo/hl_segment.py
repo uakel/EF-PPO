@@ -43,22 +43,19 @@ class HLSegment(Segment):
         return {k: flatten_batch(self.buffers[k]) for k in keys}
 
     def get_full(self, *keys):
-        len_addition = 0
-        for key, value in self.buffers.items():
-            len_addition = len(value)
-            if key not in self.long_term_buffers:
-                self.long_term_buffers[key] = value        
-            else:
-                if len(self.long_term_buffers[key]) <= self.long_term_buffers_size:
-                    self.long_term_buffers[key] = np.concatenate(
-                        (self.long_term_buffers[key], value), axis=0
-                    )
-                else:
-                    self.long_term_buffers[key][self.long_term_buffer_index:
-                                               self.long_term_buffer_index + len_addition] = value
-        self.long_term_buffer_index += len_addition
-        if self.long_term_buffer_index >= self.long_term_buffers_size:
-            self.long_term_buffer_index = 0
+        # len_addition = 0
+        # for key, value in self.buffers.items():
+        #     len_addition = len(value)
+        #     if key not in self.long_term_buffers:
+        #         self.long_term_buffers[key] = np.zeros(
+        #             (self.long_term_buffers_size, *value.shape[1:]),
+        #             dtype=value.dtype
+        #         )
+        #     self.long_term_buffers[key][self.long_term_buffer_index:
+        #                                 self.long_term_buffer_index + len_addition] = value
+        # self.long_term_buffer_index += len_addition
+        # if self.long_term_buffer_index + len_addition > self.long_term_buffers_size:
+        #     self.long_term_buffer_index = 0
         return super().get_full(*keys)
 
     def compute_GAEs(

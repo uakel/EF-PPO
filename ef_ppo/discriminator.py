@@ -195,10 +195,10 @@ class Discriminator():
             ).cpu().numpy().flatten()
         if type(self.standardize_output) == str and self.standardize_output == "fancy":
             cost = np.maximum(
-                -0.005 * (pred - self.output_running_mean_and_var[0]) / 
+                -0.0025 * (pred - self.output_running_mean_and_var[0]) / 
                     np.sqrt(
                         self.output_running_mean_and_var[1] 
-                    ) + np.minimum(0.005, -0.005 * self.output_running_mean_and_var[0] / np.sqrt(
+                    ) + np.minimum(0.0025, -0.0025 * self.output_running_mean_and_var[0] / np.sqrt(
                         self.output_running_mean_and_var[1] 
                     )),
                 0
