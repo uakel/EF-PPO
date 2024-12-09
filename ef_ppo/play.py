@@ -67,9 +67,13 @@ def play_gym(agent, environment, deterministic, budget, num_episodes, no_render)
     while True:
         if budget == "bisect":
             if not deterministic:
-                actions, budget_star = agent.test_step(
+                actions_and_maybe_budget_star = agent.test_step(
                     observations, steps,
                 )
+                if len(actions_and_maybe_budget_star) == 2:
+                    actions, budget_star = actions_and_maybe_budget_star
+                else:
+                    actions = actions_and_maybe_budget_star
             else:
                 actions, budget_star = agent.deterministic_opt_step(
                     observations, muscle_states=muscle_states, steps=1e6
