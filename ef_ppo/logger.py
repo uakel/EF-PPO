@@ -10,6 +10,7 @@ import torch
 import yaml
 
 from deprl.vendor.tonic.utils import normalize_path_decorator
+import deprl.vendor.tonic.utils.logger as depRL_logger
 
 current_logger = None
 
@@ -108,7 +109,7 @@ class Logger:
             log(f"Config file saved to {config_path}")
 
         self.known_keys = set()
-        self.stat_keys = set()
+        self.stat_levels = dict()
         self.raw = set()
         self.print = set()
         self.epoch_dict = {}
@@ -116,19 +117,14 @@ class Logger:
         self.last_epoch_progress = None
         self.start_time = time.time()
 
-    def store(self, key, value, stats=False, raw=False, print=True):
+    def store(self, key, value, stat_level="m", print=True):
         """Keeps named values during an epoch."""
 
         if key not in self.epoch_dict:
             if print:
                 self.print.add(key)
             self.epoch_dict[key] = [value]
-            if stats and not raw:
-                self.stat_keys.add(key)
-            elif raw and not stats:
-                self.raw.add(key)
-            elif raw and stats:
-                raise ArgumentError("Can only have either stats or raw")
+            self.stat_levels[key] = stat_level
         else:
             self.epoch_dict[key].append(value)
 
@@ -139,22 +135,27 @@ class Logger:
         keys = list(self.epoch_dict.keys())
         for key in keys:
             values = self.epoch_dict[key]
-            if key in self.stat_keys:
+            if self.stat_levels[key] == "m":
+                self.epoch_dict[key] = np.mean(values)
+            if "s" in self.stat_levels[key]:
                 self.epoch_dict[key + "/mean"] = np.mean(values)
                 self.epoch_dict[key + "/std"] = np.std(values)
                 self.print.add(key + "/mean")
                 self.print.add(key + "/std")
+            if "M" in self.stat_levels[key]:
                 self.epoch_dict[key + "/min"] = np.min(values)
                 self.epoch_dict[key + "/max"] = np.max(values)
+            if "l" in self.stat_levels[key]:
                 self.epoch_dict[key + "/size"] = len(values)
+            if "p" in self.stat_levels[key]:
                 percentiles = np.percentile(values, [10, 20, 30, 40, 50, 60, 70, 80 ,90])
                 for i, p in enumerate(percentiles):
                     self.epoch_dict[key + f"/p{(i + 1)*10}"] = p
                 del self.epoch_dict[key]
-            elif key in self.raw:
+            if "r" in self.stat_levels[key]:
                 pass
             else:
-                self.epoch_dict[key] = np.mean(values)
+                del self.epoch_dict[key]
 
         # Check if new keys were added.
         new_keys = [
@@ -304,6 +305,7 @@ def get_current_logger():
         current_logger = Logger()
     return current_logger
 
+depRL_logger.get_current_logger = get_current_logger
 
 def store(*args, **kwargs):
     logger = get_current_logger()
@@ -340,7 +342,7 @@ def error(msg, color="red"):
 def save(path):
     logger = get_current_logger()
     log_dict = {
-        "stat_keys": logger.stat_keys,
+        "stat_keys": logger.stat_levels,
         "known_keys": logger.known_keys,
         "console_formats": logger.console_formats,
         "final_keys": logger.final_keys,

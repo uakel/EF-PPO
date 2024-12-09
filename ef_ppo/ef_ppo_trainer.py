@@ -108,9 +108,6 @@ class Trainer:
         logger.log(f"Max budget determined as: {max_return}")
         return max_return
 
-
-
-
     def run(self, params, steps=0, epochs=0, episodes=0, save=True):
         """
         Runs the main training loop.
@@ -335,7 +332,6 @@ class Trainer:
             if stop_training:
                 self.close_mp_envs()
                 return cost_scores, constraint_scores, lengths, epochs, episodes
-
 
     def close_mp_envs(self):
         for index in range(len(self.environment.processes)):
