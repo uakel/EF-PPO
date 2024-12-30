@@ -8,7 +8,7 @@ class HLSegment(Segment):
     """
     def __init__(
         self,
-        size=1028,
+        size=128,
         batch_iterations=5,
         batch_size=None,
         discount_factor=0.97,
@@ -66,7 +66,7 @@ class HLSegment(Segment):
         next_h_bootstrap
     ):
         # Get buffer characteristics 
-        shape = self.buffers["costs"].shape
+        shape = self.buffers["rewards"].shape
         num_workers = shape[1] 
 
         # Reshape and save bootstraps in buffer
@@ -87,7 +87,7 @@ class HLSegment(Segment):
 
         # Get the constraint function evaluations and costs
         const_fn_evals = self.buffers["const_fn_eval"]
-        costs = self.buffers["costs"]
+        costs = -self.buffers["rewards"]
 
         # Get budgets
         budgets = self.buffers["budgets"]

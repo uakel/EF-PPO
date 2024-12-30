@@ -201,7 +201,7 @@ class EF_PPO(Agent):
 
     def update(self, 
                observations, 
-               costs, 
+               rewards, 
                resets, 
                terminations, 
                const_fn_eval, 
@@ -217,7 +217,7 @@ class EF_PPO(Agent):
             observations=self.last_observations,
             actions=self.last_actions,
             next_observations=observations,
-            costs=costs,
+            rewards=rewards,
             resets=resets,
             terminations=terminations,
             log_probs=self.last_log_probs,
@@ -237,7 +237,7 @@ class EF_PPO(Agent):
                 )
             )
         if self.model.return_normalizer:
-            self.model.return_normalizer.record(costs)
+            self.model.return_normalizer.record(rewards)
 
         # Update the model if the replay is ready.
         if self.replay.ready():
