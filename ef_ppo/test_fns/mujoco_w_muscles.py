@@ -7,7 +7,6 @@ def test(env,
          agent, 
          steps, 
          constraint_function, 
-         params=None, 
          test_episodes=10, 
          data_path=lambda env: env.environments[0].unwrapped.sim.data):
     """
@@ -41,8 +40,8 @@ def test(env,
             # Select an action.
             actions, budget_star = agent.test_step(env.test_observations, steps)
             assert not np.isnan(actions.sum())
-            logger.store("test/action", actions, stats=True)
-            logger.store("test/budget_star", budget_star, stats=True)
+            logger.store("test/action", actions, stat_level="msM")
+            logger.store("test/budget_star", budget_star, stat_level="msM")
 
             # Take a step in the environment.
             env.test_observations, _, info = env.step(actions)
@@ -51,7 +50,7 @@ def test(env,
             # Get and log constraint function evaluations
             const_fn_eval = constraint_function(env.test_observations, None)
             logger.store("test/constraint_function_evaluations", 
-                         const_fn_eval, stats=True)
+                         const_fn_eval, stat_level="msM")
 
             # Update metrics
             metrics["test/cost/undiscounted_cost_score"] += info["costs"][0]
@@ -74,19 +73,19 @@ def test(env,
             )
             if ep_index < 5:
                 logger.store(f"test/rollout_litterals/constraint_function_evaluations/ep_{ep_index}",
-                             list(const_fn_eval), raw=True, print=False)
+                             list(const_fn_eval), stat_level="r", print=False)
                 logger.store(f"test/rollout_litterals/costs/ep_{ep_index}",
-                             list(info["costs"]), raw=True, print=False)
+                             list(info["costs"]), stat_level="r", print=False)
                 logger.store(f"test/rollout_litterals/budget_star_raw/ep_{ep_index}",
-                             list(budget_star), raw=True, print=False)
+                             list(budget_star), stat_level="r", print=False)
                 for quant, values in measurements.items():
                     for i, value in enumerate(values):
                         logger.store(f"test/rollout_litterals/{quant}/{str(i)}/ep_{ep_index}", 
-                                     value, raw=True, print=False)
+                                     value, stat_level="r", print=False)
 
             # Get and log cost
             cost = info["costs"]
-            logger.store("test/cost/environment_costs", cost, stats=True)
+            logger.store("test/cost/environment_costs", cost, stat_level="msM")
 
 
             # Save effort
@@ -106,14 +105,14 @@ def test(env,
                     agent.replay.discount_factor,
                 )
                 for score in discounted_cost_scores:
-                    logger.store("test/cost/discounted_cost_score", score, stats=True)
+                    logger.store("test/cost/discounted_cost_score", score, stat_level="msM")
                 # constraints
                 discounted_constraint_scores = discounted_constraint_score(
                     constraint_function_evaluations_since_reset,
                     agent.replay.discount_factor,
                 )
                 for score in discounted_constraint_scores:
-                    logger.store("test/constraint/discounted_constraint_score", score, stats=True)
+                    logger.store("test/constraint/discounted_constraint_score", score, stat_level="msM")
                 break
 
         # Log the data.Average over episode length here
@@ -124,4 +123,4 @@ def test(env,
                 metrics["test/rwd_metrics/" + k] = np.sum(v)
         # average over episodes in logger
         for k, v in metrics.items():
-            logger.store(k, v, stats=True)
+            logger.store(k, v, stat_level="msM")

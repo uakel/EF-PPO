@@ -13,9 +13,9 @@ class HLSegment(Segment):
         batch_size=None,
         discount_factor=0.97,
         trace_decay=0.95,
-        long_term_buffers_size=1_000_000,
+        long_term_buffers_size=None,
         h_term_penalty=None,
-        l_term_penalty=None
+        l_term_penalty=None,
     ):
         self.steps_before_batches = -1
         self.trace_decay_sum_weights = np.array(
@@ -43,19 +43,20 @@ class HLSegment(Segment):
         return {k: flatten_batch(self.buffers[k]) for k in keys}
 
     def get_full(self, *keys):
-        # len_addition = 0
-        # for key, value in self.buffers.items():
-        #     len_addition = len(value)
-        #     if key not in self.long_term_buffers:
-        #         self.long_term_buffers[key] = np.zeros(
-        #             (self.long_term_buffers_size, *value.shape[1:]),
-        #             dtype=value.dtype
-        #         )
-        #     self.long_term_buffers[key][self.long_term_buffer_index:
-        #                                 self.long_term_buffer_index + len_addition] = value
-        # self.long_term_buffer_index += len_addition
-        # if self.long_term_buffer_index + len_addition > self.long_term_buffers_size:
-        #     self.long_term_buffer_index = 0
+        if self.long_term_buffers_size is not None:
+            len_addition = 0
+            for key, value in self.buffers.items():
+                len_addition = len(value)
+                if key not in self.long_term_buffers:
+                    self.long_term_buffers[key] = np.zeros(
+                        (self.long_term_buffers_size, *value.shape[1:]),
+                        dtype=value.dtype
+                    )
+                self.long_term_buffers[key][self.long_term_buffer_index:
+                                            self.long_term_buffer_index + len_addition] = value
+            self.long_term_buffer_index += len_addition
+            if self.long_term_buffer_index + len_addition > self.long_term_buffers_size:
+                self.long_term_buffer_index = 0
         return super().get_full(*keys)
 
     def compute_GAEs(

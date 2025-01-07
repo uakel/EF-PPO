@@ -110,7 +110,6 @@ class Logger:
 
         self.known_keys = set()
         self.stat_levels = dict()
-        self.raw = set()
         self.print = set()
         self.epoch_dict = {}
         self.width = width

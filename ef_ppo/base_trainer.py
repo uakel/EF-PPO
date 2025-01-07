@@ -26,10 +26,19 @@ class BaseTrainer:
         epoch_steps : int         = int(4096 * 16 * 4 * 10),
         save_steps : int          = int(4096 * 16 * 4 * 10),
         test_episodes : int       = 20,
+        test_fn : str | None      = None, # "module_name:fn_name"
         discount: float           = 0.99,
         show_progress : bool      = True,
-        data_path : Callable      = lambda env: env.environments[0].sim.model,
+        data_path : Callable      = lambda env: env.environments[0].unwrapped.sim.data,
     ): 
+        """
+        Note: test_fn has to have the following signature:
+            test_environment: Parallel | Sequential, 
+            agent: Agent, 
+            steps: int, 
+            data_path: Callable, 
+            test_episodes: int
+        """
         # Save the parameters
         self.max_steps : int = int(steps)
         self.epoch_steps : int = int(epoch_steps)
@@ -38,6 +47,13 @@ class BaseTrainer:
         self.discount : float = discount 
         self.show_progress = show_progress
         self.data_path = data_path
+
+        # Load the test function
+        if test_fn is not None:
+            module_name, test_fn = test_fn.split(":")
+            namespace = {}
+            exec(f"from {module_name} import {test_fn} as evaluated_test_fn", namespace)
+            self.test_fn = namespace["evaluated_test_fn"]
 
     def initialize(
         self, 
@@ -57,7 +73,7 @@ class BaseTrainer:
             muscle_states: np.ndarray,
             num_workers: int,
         ):
-        self.end_episode(0)
+        pass
 
     def finish_agent_step(
         self,
@@ -130,7 +146,15 @@ class BaseTrainer:
     def test(
         self,
     ):
-        pass
+        if not hasattr(self, "test_fn"):
+            return
+        self.test_fn(
+            self.test_environment,
+            self.agent,
+            self._steps,
+            test_episodes = self.test_episodes,
+            data_path = self.data_path,
+        )
 
     def log_epoch_statistics(
         self,
@@ -271,7 +295,7 @@ class BaseTrainer:
 class EFPPOTrainer(BaseTrainer):
     def __init__(
         self,
-        constraint_function: str = "lambda: obs, ms: -np.ones(obs.shape[0])",
+        constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0])",
         max_budget: float = 0,
         budget_update: Literal["paper", "modified", "none"] = "paper",
         **kwargs
@@ -297,10 +321,10 @@ class EFPPOTrainer(BaseTrainer):
             muscle_states: np.ndarray,
             num_workers: int
     ):
-        super().prepare_run(observations, muscle_states, num_workers)
         self._budgets = np.random.uniform(low=0, high=self.max_budget, size=num_workers)
         self._constraint_returns = np.ones(num_workers, float) * -np.inf
         self._aleph = np.zeros(num_workers, float)
+        super().prepare_run(observations, muscle_states, num_workers)
 
     def agent_step_args(
         self, 
@@ -390,7 +414,21 @@ class EFPPOTrainer(BaseTrainer):
         self._aleph = self._aleph + self.discount ** self._lengths\
             * info["const_fn_eval"]
 
-    def finish_episode(
+    def test(
+        self,
+    ):
+        if not hasattr(self, "test_fn"):
+            return
+        self.test_fn(
+            self.test_environment,
+            self.agent,
+            self._steps,
+            self.constraint_function,
+            test_episodes = self.test_episodes,
+            data_path = self.data_path,
+        )
+
+    def end_episode(
         self,
         worker: int
     ):
@@ -402,6 +440,17 @@ class EFPPOTrainer(BaseTrainer):
         )
         self._constraint_returns[worker] = -np.inf
         self._aleph[worker] = 0
+
+    def log_training_locals(
+        self,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
+        actions: np.ndarray,
+        info: Dict,
+    ):
+        super().log_training_locals(observations, muscle_states, actions, info)
+        logger.store("train/budgets", info["budgets"], stat_level="msM")
+        logger.store("train/const_fn_eval", info["const_fn_eval"], stat_level="msM")
 
 
 
