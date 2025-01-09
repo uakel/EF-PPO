@@ -13,7 +13,6 @@ class HLSegment(Segment):
         batch_size=None,
         discount_factor=0.97,
         trace_decay=0.95,
-        long_term_buffers_size=None,
         h_term_penalty=None,
         l_term_penalty=None,
     ):
@@ -24,10 +23,6 @@ class HLSegment(Segment):
         self.h_term_penalty = h_term_penalty
         self.l_term_penalty = l_term_penalty
 
-        self.long_term_buffers_size = long_term_buffers_size
-        self.long_term_buffers = {}
-        self.long_term_buffer_index = 0
-
         super().__init__(
             size=size,
             batch_iterations=batch_iterations,
@@ -36,28 +31,11 @@ class HLSegment(Segment):
             trace_decay=trace_decay
         )
 
-    def get_keys_from_entire_histroy(self, *keys):
-        return {k: flatten_batch(self.long_term_buffers[k]) for k in keys}
-
-    def get_keys_from_current_segment(self, *keys):
-        return {k: flatten_batch(self.buffers[k]) for k in keys}
-
-    def get_full(self, *keys):
-        if self.long_term_buffers_size is not None:
-            len_addition = 0
-            for key, value in self.buffers.items():
-                len_addition = len(value)
-                if key not in self.long_term_buffers:
-                    self.long_term_buffers[key] = np.zeros(
-                        (self.long_term_buffers_size, *value.shape[1:]),
-                        dtype=value.dtype
-                    )
-                self.long_term_buffers[key][self.long_term_buffer_index:
-                                            self.long_term_buffer_index + len_addition] = value
-            self.long_term_buffer_index += len_addition
-            if self.long_term_buffer_index + len_addition > self.long_term_buffers_size:
-                self.long_term_buffer_index = 0
-        return super().get_full(*keys)
+    def get_keys(self, *keys):
+        """
+        Get data without resetting the index
+        """
+        return {k: flatten_batch(self.buffers[k]) for k in keys} # type: ignore
 
     def compute_GAEs(
         self,
@@ -66,6 +44,9 @@ class HLSegment(Segment):
         h_bootstrap,
         next_h_bootstrap
     ):
+        """
+        Compute the generalized advantage estimates for the modified value fkt
+        """
         # Get buffer characteristics 
         shape = self.buffers["rewards"].shape
         num_workers = shape[1] 

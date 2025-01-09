@@ -1,3 +1,4 @@
+from typing import *
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -24,35 +25,34 @@ class Discriminator():
     def __init__(self, 
                  reference_dataset, 
                  hidden_dims,
-                 standardize_output=False,
-                 exponential_mean_discounting=0.9999,
-                 imitation_cost_multiplier=1.0,
-                 activation=torch.nn.ReLU,
-                 optimizer=torch.optim.Adam,
-                 optimizer_kwargs={"lr": 1e-4},
-                 batch_size=32,
-                 weight_imitation=1.0,
-                 weight_gradient_penalty=0,
-                 gradient_steps=8,
-                 update_frozen_every=1,
-                 clip=False,
-                 device="cpu",
+                 standardize_output : bool | Literal["fancy"] =False,
+                 exponential_mean_discounting : float =0.9999,
+                 imitation_reward_weight : float =1.0,
+                 activation : torch.nn.Module = torch.nn.ReLU, # type: ignore
+                 optimizer : torch.optim.Optimizer = torch.optim.Adam, # type: ignore
+                 optimizer_kwargs : Dict ={"lr": 1e-4},
+                 batch_size : int = 32,
+                 weight_imitation : float = 1.0,
+                 weight_gradient_penalty : float = 0,
+                 gradient_steps : int | float = 8,
+                 update_frozen_every : int = 1,
+                 device : Literal["cuda", "cpu"] = "cpu",
                  ):
         # Reference dataset
-        self.reference_dataset = reference_dataset
-        self.reference_length = self.reference_dataset["observations"].shape[0]
-        observation_dimension = self.reference_dataset["observations"].shape[1]
+        self.ref_D = reference_dataset
+        self.reference_length = self.ref_D["observations"].shape[0]
+        observation_dimension = self.ref_D["observations"].shape[1]
 
         # Network setup
         self.regressor = Regressor(
             2 * observation_dimension,
             hidden_dims,
-            activation=activation
+            activation=activation # type: ignore
         ).to(device)
         self.frozen_regressor = Regressor(
             2 * observation_dimension,
             hidden_dims,
-            activation=activation
+            activation=activation # type: ignore
         ).to(device)
         self.frozen_regressor.load_state_dict(self.regressor.state_dict())
 
@@ -63,14 +63,15 @@ class Discriminator():
         def mean_and_var_update(mean_and_var: np.ndarray,
                                 y: float) -> np.ndarray:
             add = np.array([y, (y - mean_and_var[0]) ** 2])
-            return self.exponential_mean_discounting * mean_and_var + (1 - self.exponential_mean_discounting) * add
+            return (self.exponential_mean_discounting * mean_and_var 
+                    + (1 - self.exponential_mean_discounting) * add)
         self.mean_and_var_update = np.frompyfunc(mean_and_var_update, 2, 1)
 
         # Cost parameters
-        self.imitation_cost_multiplier = imitation_cost_multiplier
+        self.imitation_cost_multiplier = imitation_reward_weight
 
         # Training parameters
-        self.optimizer = optimizer(
+        self.optimizer = optimizer( # type: ignore
             self.regressor.parameters(),
             **optimizer_kwargs
         )
@@ -80,112 +81,137 @@ class Discriminator():
         self.gradient_steps = gradient_steps
         self.n_discriminator_updates = 0
         self.update_frozen_every = update_frozen_every
-        self.clip = clip
 
         self.device = device
 
-    def data_iterator(self, learner_dataset, batch_size=256):
+    def data_iterator(self, pi_D, batch_size=256):
+        """
+        Generator that yields batches made from the reference and learner dataset
+        """
         shortest = min(self.reference_length, 
-                       len(learner_dataset["observations"]))
-        reference_indices = np.random.choice(
-            len(self.reference_dataset["observations"]), shortest, replace=False
+                       len(pi_D["observations"]))
+        ref_I = np.random.choice(
+            len(self.ref_D["observations"]), shortest, replace=False
         )
-        learner_indices = np.random.choice(
-            len(learner_dataset["observations"]), shortest, replace=False
+        pi_I = np.random.choice(
+            len(pi_D["observations"]), shortest, replace=False
         )
         for i in range(0, shortest, batch_size):
-            reference = np.concatenate(
+            ref = np.concatenate(
                 [
-                    self.reference_dataset["observations"][reference_indices[i:i+batch_size]],
-                    self.reference_dataset["next_observations"][reference_indices[i:i+batch_size]]
+                    self.ref_D["observations"][ref_I[i:i+batch_size]],
+                    self.ref_D["next_observations"][ref_I[i:i+batch_size]]
                 ],
                 axis=1
             )
-            learner = np.concatenate(
+            pi = np.concatenate(
                 [
-                    learner_dataset["observations"][learner_indices[i:i+batch_size]],
-                    learner_dataset["next_observations"][learner_indices[i:i+batch_size]]
+                    pi_D["observations"][pi_I[i:i+batch_size]],
+                    pi_D["next_observations"][pi_I[i:i+batch_size]]
                 ],
                 axis=1
             )
-            yield (torch.tensor(reference, dtype=torch.float32).to(self.device),
-                   torch.tensor(learner, dtype=torch.float32).to(self.device))
+            yield (torch.tensor(ref, dtype=torch.float32).to(self.device),
+                   torch.tensor(pi, dtype=torch.float32).to(self.device))
 
-    def update(self, learner_dataset, epochs=1):
+    def _log_predicitons(self, p_pi, p_ref, grad_pen, loss, log_pre=""):
+        with torch.no_grad():
+            logger.store(log_pre + "pred_learner/mean", 
+                         p_pi.mean().item())
+            logger.store(log_pre + "pred_learner/std", 
+                         p_pi.std().item())
+            logger.store(log_pre + "pred_reference/mean",
+                         p_ref.mean().item())
+            logger.store(log_pre + "pred_reference/std",
+                         p_ref.std().item())
+            logger.store(log_pre + "loss/total", 
+                         loss.item())
+            logger.store(log_pre + "loss/gradient_penalty",
+                         grad_pen.item() * self.weight_gradient_penalty)
+            logger.store(log_pre + "loss/gradient_penalty_loss_fraction",
+                         grad_pen.item() * self.weight_gradient_penalty / loss.item())
+
+    def _make_and_log_metrics_from_confusion_matrix(self, conf_mat, log_pre=""):
+        p_corr = (conf_mat[0, 0] + conf_mat[1, 1]) / conf_mat.sum()
+        p_corr_learner = conf_mat[0, 0] / conf_mat[0].sum()
+        p_corr_reference = conf_mat[1, 1] / conf_mat[1].sum()
+        
+        logger.store(log_pre + "p_corr", p_corr)
+        logger.store(log_pre + "p_corr_learner", p_corr_learner)
+        logger.store(log_pre + "p_corr_reference", p_corr_reference)
+        logger.store(log_pre + "confusion_matrix", 
+                     list(conf_mat.flatten()), 
+                     raw=True,
+                     print=False)
+
+    def update(self, pi_D, epochs=1):
+        """
+        Update the discriminator
+        """
+        log_pre = "imitation/discriminator_training/"
         self.n_discriminator_updates += 1
         for _ in range(epochs):
-            confusion_matrix = np.zeros((2, 2))
+            conf_mat = np.zeros((2, 2))
             it = 0
-            for reference, learner in self.data_iterator(learner_dataset, self.batch_size):
+            for ref, pi in self.data_iterator(pi_D, self.batch_size):
                 if it >= self.gradient_steps:
                     break
                 self.optimizer.zero_grad()
 
-                reference.requires_grad = True
-                pred_reference = self.regressor(reference)
+                # Compute gradient penalty
+                ref.requires_grad = True
+                p_ref = self.regressor(ref)
                 grad = torch.autograd.grad(
-                    outputs=pred_reference,
-                    inputs=reference,
-                    grad_outputs=torch.ones_like(pred_reference),
+                    outputs=p_ref,
+                    inputs=ref,
+                    grad_outputs=torch.ones_like(p_ref),
                     create_graph=True,
                     retain_graph=True,
                     only_inputs=True
                 )[0]
+                grad_pen = torch.mean(torch.norm(grad, dim=1) ** 2)
 
-                gradient_penalty = torch.mean(torch.norm(grad, dim=1) ** 2)
-
-                pred_learner = self.regressor(learner)
-
+                # Compute class. loss
+                p_pi = self.regressor(pi)
                 loss = self.weight_imitation\
-                     * F.binary_cross_entropy_with_logits(pred_learner, 
-                                                          torch.zeros_like(pred_learner)) \
-                     + self.weight_imitation\
-                     * F.binary_cross_entropy_with_logits(pred_reference, 
-                                                          torch.ones_like(pred_reference)) \
-                     + self.weight_gradient_penalty * gradient_penalty
-                # -> minimize pred_learner, maximize pred_reference
+                     * F.binary_cross_entropy_with_logits(
+                        p_pi, 
+                        torch.zeros_like(p_pi)
+                     ) + self.weight_imitation\
+                     * F.binary_cross_entropy_with_logits(
+                        p_ref, 
+                        torch.ones_like(p_ref)
+                     ) + self.weight_gradient_penalty * grad_pen
+                # => minimize policy predictions
+                # => maximize reference predictions
+
+                # Update
                 loss.backward()
                 self.optimizer.step()
 
+                # Log
+                self._log_predicitons(p_pi, p_ref, grad_pen, loss, log_pre)
                 with torch.no_grad():
-                    confusion_matrix[0, 0] += (pred_learner <= 0).sum().item()
-                    confusion_matrix[0, 1] += (pred_learner >= 0).sum().item()
-                    confusion_matrix[1, 0] += (pred_reference < 0).sum().item()
-                    confusion_matrix[1, 1] += (pred_reference > 0).sum().item()
+                    conf_mat[0, 0] += (p_pi <= 0).sum().item()
+                    conf_mat[0, 1] += (p_pi >= 0).sum().item()
+                    conf_mat[1, 0] += (p_ref < 0).sum().item()
+                    conf_mat[1, 1] += (p_ref > 0).sum().item()
 
-                    logger.store("imitation/discriminator_training/pred_learner/mean", 
-                                 pred_learner.mean().item())
-                    logger.store("imitation/discriminator_training/pred_learner/std", 
-                                 pred_learner.std().item())
-                    logger.store("imitation/discriminator_training/pred_reference/mean",
-                                 pred_reference.mean().item())
-                    logger.store("imitation/discriminator_training/pred_reference/std",
-                                 pred_reference.std().item())
-                    logger.store("imitation/discriminator_training/loss/total", 
-                                 loss.item())
-                    logger.store("imitation/discriminator_training/loss/gradient_penalty",
-                                 gradient_penalty.item() * self.weight_gradient_penalty)
-                    logger.store("imitation/discriminator_training/loss/gradient_penalty_loss_fraction",
-                                 gradient_penalty.item() * self.weight_gradient_penalty / loss.item())
-
+                
+                # Update iteration counter
                 it += 1
 
-            p_corr = (confusion_matrix[0, 0] + confusion_matrix[1, 1]) / confusion_matrix.sum()
-            p_corr_learner = confusion_matrix[0, 0] / confusion_matrix[0].sum()
-            p_corr_reference = confusion_matrix[1, 1] / confusion_matrix[1].sum()
-            
-            logger.store("imitation/discriminator_training/p_corr", p_corr)
-            logger.store("imitation/discriminator_training/p_corr_learner", p_corr_learner)
-            logger.store("imitation/discriminator_training/p_corr_reference", p_corr_reference)
-            logger.store("imitation/discriminator_training/confusion_matrix", 
-                         list(confusion_matrix.flatten()), 
-                         raw=True,
-                         print=False)
+            # Log metrics
+            self._make_and_log_metrics_from_confusion_matrix(conf_mat, log_pre)
 
+        # Update frozen regressor
         if self.n_discriminator_updates % self.update_frozen_every == 0:
             self.frozen_regressor.load_state_dict(self.regressor.state_dict())
     
-    def cost(self, observations, next_observations):
+    def reward(self, observations, next_observations):
+        """
+        Compute the reward for the discriminator
+        """
         concatenated = np.concatenate(
             [observations, next_observations], axis=1
         )
@@ -194,7 +220,7 @@ class Discriminator():
                 torch.tensor(concatenated, dtype=torch.float32).to(self.device)
             ).cpu().numpy().flatten()
         if type(self.standardize_output) == str and self.standardize_output == "fancy":
-            cost = np.maximum(
+            reward = -np.maximum(
                 -0.0025 * (pred - self.output_running_mean_and_var[0]) / 
                     np.sqrt(
                         self.output_running_mean_and_var[1] 
@@ -204,19 +230,17 @@ class Discriminator():
                 0
             )
         elif type(self.standardize_output) == bool and self.standardize_output:
-            cost = -(pred - self.output_running_mean_and_var[0]) / np.sqrt(
+            reward = (pred - self.output_running_mean_and_var[0]) / np.sqrt(
             self.output_running_mean_and_var[1]
         )
         else:
-            cost = -pred
+            reward = pred
 
         self.output_running_mean_and_var = self.mean_and_var_update.reduce(
             pred,
             initial=self.output_running_mean_and_var
         )
         cost = np.maximum(cost, 0) 
-        if self.clip:
-            cost = np.clip(cost, -1, 1)
         cost *= self.imitation_cost_multiplier
 
         logger.store("imitation/cost/discriminator_output/p_identified",
