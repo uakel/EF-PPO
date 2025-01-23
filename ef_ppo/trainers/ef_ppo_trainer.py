@@ -36,7 +36,7 @@ class EFPPOTrainer(BaseTrainer):
         super().initialize(agent, environment, test_environment, full_save)
         self.agent.max_budget = self.max_budget
 
-    def prepare_run(
+    def _prepare_run(
             self,
             observations: np.ndarray,
             muscle_states: np.ndarray,
@@ -45,16 +45,16 @@ class EFPPOTrainer(BaseTrainer):
         self._budgets = np.random.uniform(low=0, high=self.max_budget, size=num_workers)
         self._constraint_returns = np.ones(num_workers, float) * -np.inf
         self._aleph = np.zeros(num_workers, float)
-        super().prepare_run(observations, muscle_states, num_workers)
+        super()._prepare_run(observations, muscle_states, num_workers)
 
-    def agent_step_args(
+    def _agent_step_args(
         self, 
         observations: np.ndarray,
         muscle_states: np.ndarray
     ) -> Tuple:
         return observations, self._steps, self._budgets, muscle_states
 
-    def paper_budget_update(
+    def _paper_budget_update(
         self,
         info: Dict,
         constraint: np.ndarray
@@ -66,7 +66,7 @@ class EFPPOTrainer(BaseTrainer):
              self.max_budget
         )
         
-    def modified_budget_update(
+    def _modified_budget_update(
         self,
         info: Dict,
         constraint: np.ndarray
@@ -81,49 +81,49 @@ class EFPPOTrainer(BaseTrainer):
             self.max_budget
         ) 
 
-    def constant_budget_update(
+    def _constant_budget_update(
         self,
         info: Dict,
         constraint: np.ndarray
     ):
         pass
 
-    def update_budget(
+    def _update_budget(
         self,
         info: Dict,
         constraint: np.ndarray
     ):
         if self.budget_update == "paper":
-            self.paper_budget_update(info, constraint)
+            self._paper_budget_update(info, constraint)
         elif self.budget_update == "modified":
-            self.modified_budget_update(info, constraint)
+            self._modified_budget_update(info, constraint)
         else:
-            self.constant_budget_update(info, constraint)
+            self._constant_budget_update(info, constraint)
 
-    def finish_env_step(
+    def _finish_env_step(
         self, 
         observations: np.ndarray, 
         muscle_states: np.ndarray, 
         actions: np.ndarray, 
         info: Dict
     ):
-        super().finish_env_step(observations, muscle_states, actions, info)
+        super()._finish_env_step(observations, muscle_states, actions, info)
         const_fn_eval = self.constraint_function(observations, muscle_states)
         info["const_fn_eval"] = const_fn_eval
-        self.update_budget(info, const_fn_eval)
+        self._update_budget(info, const_fn_eval)
         info["budgets"] = self._budgets.copy()
 
-    def finish_update(
+    def _finish_update(
         self,
         observations: np.ndarray,
         muscle_states: np.ndarray,
         actions: np.ndarray,
         info: Dict,
     ):
-        super().finish_update(observations, muscle_states, actions, info)
+        super()._finish_update(observations, muscle_states, actions, info)
         ends = info["terminations"] | info["resets"]
         self._budgets[ends] = np.random.uniform(
-            low=-self.max_budget if self.budget_update == "none" else 0,
+            low=-self.max_budget,
             high=self.max_budget, 
             size=ends.sum()
         )
@@ -135,7 +135,7 @@ class EFPPOTrainer(BaseTrainer):
         self._aleph = self._aleph + self.discount ** self._lengths\
             * info["const_fn_eval"]
 
-    def test(
+    def _test(
         self,
     ):
         if not hasattr(self, "test_fn"):
@@ -149,11 +149,11 @@ class EFPPOTrainer(BaseTrainer):
             data_path = self.data_path,
         )
 
-    def end_episode(
+    def _end_episode(
         self,
         worker: int
     ):
-        super().end_episode(worker)
+        super()._end_episode(worker)
         logger.store(
             "train/constraint_return", 
             self._constraint_returns[worker], 
@@ -162,14 +162,14 @@ class EFPPOTrainer(BaseTrainer):
         self._constraint_returns[worker] = -np.inf
         self._aleph[worker] = 0
 
-    def log_training_locals(
+    def _log_training_locals(
         self,
         observations: np.ndarray,
         muscle_states: np.ndarray,
         actions: np.ndarray,
         info: Dict,
     ):
-        super().log_training_locals(observations, muscle_states, actions, info)
+        super()._log_training_locals(observations, muscle_states, actions, info)
         logger.store("train/budgets", info["budgets"], stat_level="msM")
         logger.store("train/const_fn_eval", info["const_fn_eval"], stat_level="msM")
 

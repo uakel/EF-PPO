@@ -116,12 +116,10 @@ class Logger:
         self.last_epoch_progress = None
         self.start_time = time.time()
 
-    def store(self, key, value, stat_level="m", print=True):
+    def store(self, key, value, stat_level = "m"):
         """Keeps named values during an epoch."""
 
         if key not in self.epoch_dict:
-            if print:
-                self.print.add(key)
             self.epoch_dict[key] = [value]
             self.stat_levels[key] = stat_level
         else:
@@ -134,12 +132,8 @@ class Logger:
         keys = list(self.epoch_dict.keys())
         for key in keys:
             values = self.epoch_dict[key]
-            if self.stat_levels[key] == "m":
-                self.epoch_dict[key] = np.mean(values)
             if "s" in self.stat_levels[key]:
-                self.epoch_dict[key + "/mean"] = np.mean(values)
                 self.epoch_dict[key + "/std"] = np.std(values)
-                self.print.add(key + "/mean")
                 self.print.add(key + "/std")
             if "M" in self.stat_levels[key]:
                 self.epoch_dict[key + "/min"] = np.min(values)
@@ -151,9 +145,13 @@ class Logger:
                 for i, p in enumerate(percentiles):
                     self.epoch_dict[key + f"/p{(i + 1)*10}"] = p
                 del self.epoch_dict[key]
-            if "r" in self.stat_levels[key]:
-                pass
-            else:
+            if self.stat_levels[key] == "m":
+                self.epoch_dict[key] = np.mean(values)
+                self.print.add(key)
+            elif "m" in self.stat_levels[key]:
+                self.epoch_dict[key + "/mean"] = np.mean(values)
+                self.print.add(key + "/mean")
+            elif "r" not in self.stat_levels[key]:
                 del self.epoch_dict[key]
 
         # Check if new keys were added.
@@ -306,9 +304,25 @@ def get_current_logger():
 
 depRL_logger.get_current_logger = get_current_logger
 
-def store(*args, **kwargs):
+def store(
+    *args, 
+    # m: mean, s: std, M: min/max, l: length, p: percentiles, r: raw
+    stat_level = "m",  
+    **kwargs
+):
+    """
+    Store a key-value pair in the current logger.
+
+    Stat levels:
+        - "m": mean
+        - "s": standard deviation
+        - "M": min/max
+        - "l": length
+        - "p": percentiles
+        - "r": raw
+    """
     logger = get_current_logger()
-    return logger.store(*args, **kwargs)
+    return logger.store(*args, stat_level=stat_level, **kwargs)
 
 
 def dump(*args, **kwargs):

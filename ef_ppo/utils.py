@@ -24,7 +24,7 @@ def discounted_constraint_score(constraint_fn_evals, discount):
         scores[i] = carry
     return scores
 
-def n_sect(function, x_min, x_max, n_iter=5, n=20):
+def n_sect(function, x_min, x_max, n_iter=2, n=20):
     """
     parallel scalar root finding
 
@@ -37,14 +37,17 @@ def n_sect(function, x_min, x_max, n_iter=5, n=20):
     """
     points = np.linspace(x_min, x_max, n)
     evaluations = function(points).flatten()
-    flips = np.logical_and(evaluations[:-1] > 0, evaluations[1:] <= 0)
-    if np.sum(flips) == 0:
-        return points[np.argsort(evaluations)[0]]
-        logger.store("test/no_sign_flip_outer_problem", 1.0)
+    if all(evaluations >= 0):
+        return points[np.argmin(evaluations)]
+    if all(evaluations <= 0):
+        return x_min
+    down_flips = (evaluations[:-1] >= 0) & (evaluations[1:] < 0)
+    if sum(down_flips) == 0:
+        return x_max
     if n_iter == 0:
-        return min(points[:-1][flips][0], points[1:][flips][0])
+        return points[1:][down_flips][0]
     return n_sect(function, 
-                  points[:-1][flips][0],
-                  points[1:][flips][0], 
+                  points[:-1][down_flips][0],
+                  points[1:][down_flips][0], 
                   n_iter=n_iter-1, 
                   n=n) 

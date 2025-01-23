@@ -62,171 +62,13 @@ class BaseTrainer:
         test_environment : Parallel | Sequential | None = None,
         full_save : bool                                = False,
     ):
+        """
+        Initialize the trainer
+        """
         self.agent : Agent = agent
         self.environment : Parallel | Sequential = environment
         self.test_environment : Parallel | Sequential | None = test_environment
         self.full_save : bool = full_save
-
-    def prepare_run(
-            self,
-            observations: np.ndarray, 
-            muscle_states: np.ndarray,
-            num_workers: int,
-        ):
-        pass
-
-    def finish_agent_step(
-        self,
-        observations: np.ndarray,
-        muscle_states: np.ndarray,
-        actions: np.ndarray,
-        info: Dict,
-    ):
-        pass
-
-    def agent_step_args(
-            self, 
-            observations: np.ndarray,
-            muscle_states: np.ndarray
-    ) -> Tuple:
-        return observations, self._steps
-
-    def agent_update_args(
-        self,
-        info: Dict,
-        steps: int
-    ) -> Dict:
-        info["steps"] = steps
-        return info
-
-    def finish_env_step(
-        self,
-        observations: np.ndarray,
-        muscle_states: np.ndarray,
-        actions: np.ndarray,
-        info: Dict,
-    ):
-        pass
-
-    def finish_update(
-        self,
-        observations: np.ndarray,
-        muscle_states: np.ndarray,
-        actions: np.ndarray,
-        info: Dict,
-    ):
-        # Update monitoring variables
-        self._lengths += 1
-        self._steps += self._num_workers
-        self._steps_in_curr_epoch += self._num_workers
-        self._steps_since_save += self._num_workers
-        self._returns += self.discount**self._lengths * info["rewards"]
-
-        # Log the local variables generated in the training loop
-        self.log_training_locals(observations, muscle_states, actions, info)
-
-        # Print the progress bar
-        if self.show_progress:
-            logger.show_progress(
-                self._steps, self.epoch_steps, self.max_steps
-            )
-
-    def end_episode(
-        self,
-        worker: int,
-    ):
-        logger.store("train/episode_length", self._lengths[worker], stat_level="msM")
-        logger.store("train/episode_return", self._returns[worker], stat_level="msM")
-
-        self._lengths[worker] = 0
-        self._returns[worker] = 0
-
-        self._episodes += 1
-
-    def test(
-        self,
-    ):
-        if not hasattr(self, "test_fn"):
-            return
-        self.test_fn(
-            self.test_environment,
-            self.agent,
-            self._steps,
-            test_episodes = self.test_episodes,
-            data_path = self.data_path,
-        )
-
-    def log_epoch_statistics(
-        self,
-    ):
-        logger.store("train/episodes", self._episodes)
-        logger.store("train/epochs", self._epochs)
-        logger.store("train/seconds", time.time() - self._start_time)
-        logger.store("train/epoch_seconds", time.time() - self._last_epoch_time)
-        logger.store("train/epoch_steps", self._steps_in_curr_epoch)
-        logger.store("train/steps", self._steps)
-        logger.store("train/worker_steps", self._steps // self._num_workers)
-        logger.store("train/steps_per_second", 
-                     self._steps / (time.time() - self._last_epoch_time))
-
-    def end_epoch(
-        self,
-    ):
-        if self.test_environment is not None:
-            self.test()
-
-        self._epochs += 1
-        self.log_epoch_statistics()
-        logger.dump()
-        self._last_epoch_time = time.time()
-        self._steps_in_curr_epoch = 0
-
-    def close_mp_envs(self):
-        for index in range(len(self.environment.processes)): # type: ignore
-            self.environment.processes[index].terminate()    # type: ignore
-            self.environment.action_pipes[index].close()     # type: ignore
-        self.environment.output_queue.close()                # type: ignore    
-
-    def save_time(self):
-        time_path = os.path.join(logger.get_path(), "checkpoints/time.pt")
-        time_dict = {
-            "epochs": self._epochs,
-            "episodes": self._episodes,
-            "steps": self._steps,
-        }
-        torch.save(time_dict, time_path)
-
-    def end_training(
-        self,
-    ):
-        self.save_checkpoint()
-        self.close_mp_envs()
-        self.save_time()
-
-    def save_checkpoint(
-        self,
-    ):
-        path = os.path.join(logger.get_path(), "checkpoints")
-        checkpoint_name = f"step_{self._steps}"
-        save_path = os.path.join(path, checkpoint_name)
-        if self._save:
-            # save agent checkpoint
-            self.agent.save(save_path, full_save=self.full_save)
-            # save logger checkpoint
-            logger.save(save_path)
-            # save time iteration dict
-            self.save_time()
-            self._steps_since_save = self._steps % self.save_steps
-
-    def log_training_locals(
-        self,
-        observations: np.ndarray,
-        muscle_states: np.ndarray,
-        actions: np.ndarray,
-        info: Dict,
-    ):
-        logger.store("train/action", actions, stat_level="msM")
-        logger.store("train/rewards", info["rewards"], stat_level="msM")
 
     def run(
             self, 
@@ -236,6 +78,9 @@ class BaseTrainer:
             episodes : int = 0,
             save : bool =True
     ):
+        """
+        Run the training loop
+        """
         # Save the parameters
         self._params = params
         self._steps = steps
@@ -256,37 +101,199 @@ class BaseTrainer:
         self._returns = np.zeros(self._num_workers, float)
 
         # Call preparation hook
-        self.prepare_run(observations, muscle_states, self._num_workers)
+        self._prepare_run(observations, muscle_states, self._num_workers)
 
         # Start training loop
         while True:
             # Get actions
-            actions = self.agent.step(*self.agent_step_args(observations, muscle_states))
-            self.finish_agent_step(observations, muscle_states, actions, info) # type: ignore
+            actions = self.agent.step(*self._agent_step_args(observations, muscle_states))
+            self._finish_agent_step(observations, muscle_states, actions, info) # type: ignore
             # Take a step in the environments.
             observations, muscle_states, info = self.environment.step(actions)
-            self.finish_env_step(observations, muscle_states, actions, info) # type: ignore
+            self._finish_env_step(observations, muscle_states, actions, info) # type: ignore
 
             # Update the agent
             # Update agent
-            self.agent.update(**self.agent_update_args(info, self._steps))
-            self.finish_update(observations, muscle_states, actions, info) # type: ignore
+            self.agent.update(**self._agent_update_args(info, self._steps))
+            self._finish_update(observations, muscle_states, actions, info) # type: ignore
 
             # Handle episode termination workloads
             for w in range(self._num_workers):
                 if info["resets"][w]:
-                    self.end_episode(w)
+                    self._end_episode(w)
 
             # End of epoch
             if self._steps_in_curr_epoch >= self.epoch_steps:
-                self.end_epoch()
+                self._end_epoch()
 
             # Save a checkpoint
             if self._steps_since_save >= self.save_steps:
-                self.save_checkpoint()
+                self._save_checkpoint()
                 self._steps_since_save = 0
 
             # End of training
             if self._steps >= self.max_steps:
-                self.end_training()
+                self._end_training()
                 break
+
+    def _prepare_run(
+            self,
+            observations: np.ndarray, 
+            muscle_states: np.ndarray,
+            num_workers: int,
+        ):
+        pass
+
+    def _finish_agent_step(
+        self,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
+        actions: np.ndarray,
+        info: Dict,
+    ):
+        pass
+
+    def _agent_step_args(
+            self, 
+            observations: np.ndarray,
+            muscle_states: np.ndarray
+    ) -> Tuple:
+        return observations, self._steps
+
+    def _agent_update_args(
+        self,
+        info: Dict,
+        steps: int
+    ) -> Dict:
+        info["steps"] = steps
+        return info
+
+    def _finish_env_step(
+        self,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
+        actions: np.ndarray,
+        info: Dict,
+    ):
+        pass
+
+    def _finish_update(
+        self,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
+        actions: np.ndarray,
+        info: Dict,
+    ):
+        # Update monitoring variables
+        self._lengths += 1
+        self._steps += self._num_workers
+        self._steps_in_curr_epoch += self._num_workers
+        self._steps_since_save += self._num_workers
+        self._returns += self.discount**self._lengths * info["rewards"]
+
+        # Log the local variables generated in the training loop
+        self._log_training_locals(observations, muscle_states, actions, info)
+
+        # Print the progress bar
+        if self.show_progress:
+            logger.show_progress(
+                self._steps, self.epoch_steps, self.max_steps
+            )
+
+    def _end_episode(
+        self,
+        worker: int,
+    ):
+        logger.store("train/episode_length", self._lengths[worker], stat_level="msM")
+        logger.store("train/episode_return", self._returns[worker], stat_level="msM")
+
+        self._lengths[worker] = 0
+        self._returns[worker] = 0
+
+        self._episodes += 1
+
+    def _test(
+        self,
+    ):
+        if not hasattr(self, "test_fn"):
+            return
+        self.test_fn(
+            self.test_environment,
+            self.agent,
+            self._steps,
+            test_episodes = self.test_episodes,
+            data_path = self.data_path,
+        )
+
+    def _log_epoch_statistics(
+        self,
+    ):
+        logger.store("train/episodes", self._episodes)
+        logger.store("train/epochs", self._epochs)
+        logger.store("train/seconds", time.time() - self._start_time)
+        logger.store("train/epoch_seconds", time.time() - self._last_epoch_time)
+        logger.store("train/epoch_steps", self._steps_in_curr_epoch)
+        logger.store("train/steps", self._steps)
+        logger.store("train/worker_steps", self._steps // self._num_workers)
+        logger.store("train/steps_per_second", 
+                     self._steps / (time.time() - self._last_epoch_time))
+
+    def _end_epoch(
+        self,
+    ):
+        if self.test_environment is not None:
+            self._test()
+
+        self._epochs += 1
+        self._log_epoch_statistics()
+        logger.dump()
+        self._last_epoch_time = time.time()
+        self._steps_in_curr_epoch = 0
+
+    def _close_mp_envs(self):
+        for index in range(len(self.environment.processes)): # type: ignore
+            self.environment.processes[index].terminate()    # type: ignore
+            self.environment.action_pipes[index].close()     # type: ignore
+        self.environment.output_queue.close()                # type: ignore    
+
+    def _save_time(self):
+        time_path = os.path.join(logger.get_path(), "checkpoints/time.pt")
+        time_dict = {
+            "epochs": self._epochs,
+            "episodes": self._episodes,
+            "steps": self._steps,
+        }
+        torch.save(time_dict, time_path)
+
+    def _end_training(
+        self,
+    ):
+        self._save_checkpoint()
+        self._close_mp_envs()
+        self._save_time()
+
+    def _save_checkpoint(
+        self,
+    ):
+        path = os.path.join(logger.get_path(), "checkpoints")
+        checkpoint_name = f"step_{self._steps}"
+        save_path = os.path.join(path, checkpoint_name)
+        if self._save:
+            # save agent checkpoint
+            self.agent.save(save_path, full_save=self.full_save)
+            # save logger checkpoint
+            logger.save(save_path)
+            # save time iteration dict
+            self._save_time()
+            self._steps_since_save = self._steps % self.save_steps
+
+    def _log_training_locals(
+        self,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
+        actions: np.ndarray,
+        info: Dict,
+    ):
+        logger.store("train/action", actions, stat_level="msM")
+        logger.store("train/rewards", info["rewards"], stat_level="msM")
+

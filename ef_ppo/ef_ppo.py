@@ -190,7 +190,7 @@ class EF_PPO(Agent):
             budget
         )
         budget_star = n_sect(fixed_obs_value, 
-                             0,
+                             -self.max_budget,
                              self.max_budget)
         budget_star = np.array([budget_star]) 
 

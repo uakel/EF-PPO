@@ -34,3 +34,34 @@ class HLActorCritic(torch.nn.Module):
             self.observation_normalizer,
             self.return_normalizer,
         )
+
+class FourierObservationEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        observation_size,
+        mapping_size=256,
+        scale=10.0,
+    ):
+        self.observation_size = observation_size
+        self.mapping_size = mapping_size
+        self.shifts = torch.randn(mapping_size, observation_size) * scale
+
+    def initialize(
+        self,
+        observation_space,
+        action_space=None,
+        observation_normalizer=None,
+    ):
+        self.observation_normalizer = observation_normalizer
+        return self.observation_size
+
+    def forward(self, observations):
+        if self.observation_normalizer:
+            observations = self.observation_normalizer(observations)
+        shape = observations.shape
+        observations = torch.cat([torch.cos(
+            self.shifts @ observations.unsqueeze(-1)
+        ),
+        torch.sin(self.shifts @ observations.unsqueeze(-1))], dim=-1)
+        return observations
+
