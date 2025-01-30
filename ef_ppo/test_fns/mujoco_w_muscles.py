@@ -2,9 +2,11 @@ import numpy as np
 
 from ef_ppo import logger
 from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
+from ef_ppo.ef_ppo import EF_PPO
+from ef_ppo.discriminator import Discriminator
 
 def test(env, 
-         agent, 
+         agent: EF_PPO, 
          steps, 
          constraint_function, 
          test_episodes=10, 
@@ -38,7 +40,8 @@ def test(env,
         constraint_function_evaluations_since_reset = []
         while True:
             # Select an action.
-            actions, budget_star = agent.test_step(env.test_observations, steps)
+            actions = agent.test_step(env.test_observations, steps)
+            budget_star = agent.budget_star.copy()
             assert not np.isnan(actions.sum())
             logger.store("test/action", actions, stat_level="msM")
             logger.store("test/budget_star", budget_star, stat_level="msM")
@@ -50,7 +53,7 @@ def test(env,
             # Get and log constraint function evaluations
             const_fn_eval = constraint_function(env.test_observations, None)
             logger.store("test/constraint_function_evaluations", 
-                         const_fn_eval, stat_level="msM")
+                         const_fn_eval[0], stat_level="msM")
 
             # Update metrics
             metrics["test/cost/undiscounted_cost_score"] += info["costs"][0]
@@ -71,17 +74,17 @@ def test(env,
                 lengths = env.environments[0].muscle_lengths(),
                 forces = env.environments[0].muscle_forces(),
             )
-            if ep_index < 5:
+            if ep_index < 0:
                 logger.store(f"test/rollout_litterals/constraint_function_evaluations/ep_{ep_index}",
-                             list(const_fn_eval), stat_level="r", print=False)
+                             list(const_fn_eval), stat_level="r")
                 logger.store(f"test/rollout_litterals/costs/ep_{ep_index}",
-                             list(info["costs"]), stat_level="r", print=False)
+                             list(info["costs"]), stat_level="r")
                 logger.store(f"test/rollout_litterals/budget_star_raw/ep_{ep_index}",
-                             list(budget_star), stat_level="r", print=False)
+                             list(budget_star), stat_level="r")
                 for quant, values in measurements.items():
                     for i, value in enumerate(values):
                         logger.store(f"test/rollout_litterals/{quant}/{str(i)}/ep_{ep_index}", 
-                                     value, stat_level="r", print=False)
+                                     value, stat_level="r")
 
             # Get and log cost
             cost = info["costs"]
@@ -124,3 +127,20 @@ def test(env,
         # average over episodes in logger
         for k, v in metrics.items():
             logger.store(k, v, stat_level="msM")
+
+
+def test_for_imitation(
+    env, 
+    agent: EF_PPO, 
+    discriminator: Discriminator,
+    steps, 
+    env_constraint_function, 
+    test_episodes=10, 
+    data_path=lambda env: env.environments[0].unwrapped.sim.data
+):
+    def im_constraint_function(obs, _):
+        pred = discriminator.predict(agent.last_observations, obs, log=False)
+        const = discriminator.constraint(pred)
+        return const
+
+    test(env, agent, steps, im_constraint_function, test_episodes, data_path)

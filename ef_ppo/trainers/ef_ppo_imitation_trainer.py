@@ -24,6 +24,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         discriminator_mean_discounting: float=0.9999,
         imitation_reward_weight: float=0.0,
         imitation_constraint_weight: float=1.0,
+        imitation_constraint_slack: float=0.2,
 
         # Discriminator training settings
         discriminator_optimizer: torch.optim.Optimizer=torch.optim.Adam, # type: ignore
@@ -49,6 +50,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
             exponential_mean_discounting=discriminator_mean_discounting,
             imitation_reward_weight=imitation_reward_weight,
             imitation_constraint_weight=imitation_constraint_weight,
+            imitation_constraint_slack=imitation_constraint_slack,
             optimizer=discriminator_optimizer, # type: ignore
             optimizer_kwargs=optimizer_kwargs,
             batch_size=discriminator_batch_size,
@@ -82,7 +84,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
 
         info["rewards"] *= self.environment_reward_weight
         info["rewards"] += discriminator_reward
-        if not self.environment_constraint_weight <= 0:
+        if self.environment_constraint_weight > 0:
             info["const_fn_eval"] *= self.environment_constraint_weight
         if not self.discriminator.imitation_constraint_weight <= 0:
             info["const_fn_eval"] = np.maximum(

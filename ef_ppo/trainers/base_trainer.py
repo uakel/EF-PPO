@@ -236,7 +236,7 @@ class BaseTrainer:
         logger.store("train/steps", self._steps)
         logger.store("train/worker_steps", self._steps // self._num_workers)
         logger.store("train/steps_per_second", 
-                     self._steps / (time.time() - self._last_epoch_time))
+                     self._steps_in_curr_epoch / (time.time() - self._last_epoch_time))
 
     def _end_epoch(
         self,

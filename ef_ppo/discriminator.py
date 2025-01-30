@@ -45,7 +45,7 @@ class Discriminator():
         exponential_mean_discounting: float =0.9999,
         imitation_reward_weight: float =1.0,
         imitation_constraint_weight: float =1.0,
-        imitation_constraint_allowance: float =0.2,
+        imitation_constraint_slack: float =0.2,
         activation: torch.nn.Module = torch.nn.ReLU,  
         elementwise_loss: ELEMENTWISE_LOSS_TYPE = "smooth_l1",
         optimizer: torch.optim.Optimizer = torch.optim.Adam,
@@ -55,7 +55,7 @@ class Discriminator():
         weight_gradient_penalty: float = 0,
         gradient_steps: int | float = 8,
         update_frozen_every: int = 1,
-        device: Literal["cuda", "cpu"] = "cpu",
+        device: Literal["cuda", "cpu"] = "cuda",
     ):
         # Reference dataset
         self.ref_D = reference_dataset
@@ -92,7 +92,7 @@ class Discriminator():
         # Objective parameters
         self.imitation_reward_weight = imitation_reward_weight
         self.imitation_constraint_weight = imitation_constraint_weight
-        self.imitation_constraint_allowance = imitation_constraint_allowance
+        self.imitation_constraint_slack = imitation_constraint_slack
 
         # Training parameters
         self.elementwise_loss = elementwise_loss
@@ -152,7 +152,7 @@ class Discriminator():
         if self.n_discriminator_updates % self.update_frozen_every == 0:
             self.frozen_regressor.load_state_dict(self.regressor.state_dict())
 
-    def predict(self, observations: np.ndarray, next_observations: np.ndarray) -> np.ndarray:
+    def predict(self, observations: np.ndarray, next_observations: np.ndarray, log=True) -> np.ndarray:
         """
         Lets the discriminator predict the logits
         """
@@ -165,7 +165,8 @@ class Discriminator():
             ).cpu().numpy().flatten()
 
         # Log and return
-        self._log_policy_prediction_metrics(pred)
+        if log:
+            self._log_policy_prediction_metrics(pred)
         return pred
 
     def update_mean_and_var(self, pred: np.ndarray):
@@ -190,8 +191,9 @@ class Discriminator():
         Compute the constraint evaluations from the discriminator predictions
         """
         constraint = -self._apply_shaping(pred.copy(), self.constraint_shaping)
+        constraint -= self.imitation_constraint_slack
         constraint *= self.imitation_constraint_weight
-        return constraint - self.imitation_constraint_allowance
+        return constraint
 
     # Reward and constraint shaping
     def _apply_shaping(self, pred: np.ndarray, shaping: SHAPING_TYPE) -> np.ndarray:
@@ -258,7 +260,7 @@ class Discriminator():
         reference and learner datasets
         """
         # Filter out the positive budgets
-        postive_budgets = pi_D["budgets"] > 0
+        postive_budgets = pi_D["budgets"] >= 0
         logger.store("imitation/positive_budget_fraction",
                      sum(postive_budgets) / len(postive_budgets))
         
@@ -462,7 +464,7 @@ class Discriminator():
     ):
         logger.store(log_pre + "discriminator_output/p_identified",
                      (pred <= 0).sum() / len(pred))
-        logger.store(log_pre + "discriminator_output", pred, stat_level="ms")
+        logger.store(log_pre + "discriminator_output", list(pred), stat_level="ms")
         logger.store(log_pre + "discriminator_output_running_vars/mean",
                      self.output_running_mean_and_var[0])
         logger.store(log_pre + "discriminator_output_running_vars/std",
