@@ -148,11 +148,11 @@ class Logger:
             if self.stat_levels[key] == "m":
                 self.epoch_dict[key] = np.mean(values)
                 self.print.add(key)
-            elif "m" in self.stat_levels[key]:
+            elif not "r" in self.stat_levels[key]:
+                del self.epoch_dict[key]
+            if "m" in self.stat_levels[key] and self.stat_levels[key] != "m":
                 self.epoch_dict[key + "/mean"] = np.mean(values)
                 self.print.add(key + "/mean")
-            elif "r" not in self.stat_levels[key]:
-                del self.epoch_dict[key]
 
         # Check if new keys were added.
         new_keys = [
