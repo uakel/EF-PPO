@@ -32,7 +32,6 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         discriminator_loss_imiation_weight: float=0.5,
         discriminator_loss_gradience_penalty_weight: float=0.0,
         discriminator_training_steps: float=float("inf"),
-        update_frozen_discriminator_every: int=1,
         discriminator_device: Literal["cuda", "cpu"]="cuda",
         **kwargs,
     ):
@@ -55,7 +54,6 @@ class EFPPOImitationTrainer(EFPPOTrainer):
             weight_imitation=discriminator_loss_imiation_weight,
             weight_gradient_penalty=discriminator_loss_gradience_penalty_weight,
             gradient_steps=discriminator_training_steps,
-            update_frozen_every=update_frozen_discriminator_every,
             device=discriminator_device, # type: ignore
         )
         

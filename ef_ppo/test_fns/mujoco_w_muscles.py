@@ -3,12 +3,14 @@ import numpy as np
 from ef_ppo import logger
 from ef_ppo.utils import discounted_cost_score, discounted_constraint_score
 
-def test(env, 
-         agent, 
-         steps, 
-         constraint_function, 
-         test_episodes=10, 
-         data_path=lambda env: env.environments[0].unwrapped.sim.data):
+def test(
+    env, 
+    agent, 
+    steps, 
+    constraint_function, 
+    test_episodes=10, 
+    data_path=lambda env: env.environments[0].unwrapped.sim.data
+):
     """
     Tests the EF-PPO agent on the test environment.
     """

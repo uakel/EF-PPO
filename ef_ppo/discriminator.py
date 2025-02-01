@@ -54,7 +54,6 @@ class Discriminator():
         weight_imitation: float = 1.0,
         weight_gradient_penalty: float = 0,
         gradient_steps: int | float = 8,
-        update_frozen_every: int = 1,
         device: Literal["cuda", "cpu"] = "cpu",
     ):
         # Reference dataset
@@ -68,12 +67,6 @@ class Discriminator():
             hidden_dims,
             activation=activation # type: ignore
         ).to(device)
-        self.frozen_regressor = Regressor(
-            2 * observation_dimension,
-            hidden_dims,
-            activation=activation # type: ignore
-        ).to(device)
-        self.frozen_regressor.load_state_dict(self.regressor.state_dict())
 
         # Standartization of the discriminator output
         self.reward_shaping: SHAPING_TYPE = reward_shaping
@@ -105,7 +98,6 @@ class Discriminator():
         self.weight_gradient_penalty = weight_gradient_penalty
         self.gradient_steps = gradient_steps
         self.n_discriminator_updates = 0
-        self.update_frozen_every = update_frozen_every
         self.device = device
 
     def update(
@@ -148,9 +140,13 @@ class Discriminator():
             # Log metrics
             self._make_and_log_metrics_from_confusion_matrix(conf_mat, log_pre)
 
-        # Update frozen regressor
-        if self.n_discriminator_updates % self.update_frozen_every == 0:
-            self.frozen_regressor.load_state_dict(self.regressor.state_dict())
+    def reset_regressor(self):
+        """
+        Reset the regressor
+        """
+        for layer in self.regressor.children():
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
 
     def predict(self, observations: np.ndarray, next_observations: np.ndarray) -> np.ndarray:
         """
@@ -160,7 +156,7 @@ class Discriminator():
             [observations, next_observations], axis=1
         )
         with torch.no_grad():
-            pred = self.frozen_regressor(
+            pred = self.regressor(
                 torch.tensor(concatenated, dtype=torch.float32).to(self.device)
             ).cpu().numpy().flatten()
 
@@ -207,7 +203,8 @@ class Discriminator():
         elif shaping == "none":
             return pred
         else:
-            raise ValueError("shaping must be one of 'fancy', 'neg_fancy', 'vanilla', 'none'")
+            raise ValueError("shaping must be one of 'fancy',"
+                             " 'neg_fancy', 'vanilla', 'none'")
 
     def _fancy_std(self, pred: np.ndarray) -> np.ndarray:
         """
@@ -256,19 +253,20 @@ class Discriminator():
         """
         Generator that yields batches made from the 
         reference and learner datasets
+
+        Args:
+            pi_D: The policy dataset, a dictionary with keys
+                  "observations", "next_observations"
+            batch_size: The batch size
         """
-        # Filter out the positive budgets
-        postive_budgets = pi_D["budgets"] > 0
-        logger.store("imitation/positive_budget_fraction",
-                     sum(postive_budgets) / len(postive_budgets))
         
         shortest = min(self.reference_length, 
-                       len(pi_D["observations"][postive_budgets]))
+                       len(pi_D["observations"]))
         ref_I = np.random.choice(
             len(self.ref_D["observations"]), shortest, replace=False
         )
         pi_I = np.random.choice(
-            len(pi_D["observations"][postive_budgets]), shortest, replace=False
+            len(pi_D["observations"]), shortest, replace=False
         )
         for i in range(0, shortest, batch_size):
             ref = np.concatenate(
@@ -280,8 +278,8 @@ class Discriminator():
             )
             pi = np.concatenate(
                 [
-                    pi_D["observations"][postive_budgets][pi_I[i:i+batch_size]],
-                    pi_D["next_observations"][postive_budgets][pi_I[i:i+batch_size]]
+                    pi_D["observations"][pi_I[i:i+batch_size]],
+                    pi_D["next_observations"][pi_I[i:i+batch_size]]
                 ],
                 axis=1
             )
