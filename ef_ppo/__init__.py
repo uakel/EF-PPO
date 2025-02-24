@@ -6,4 +6,5 @@ from .trainers import (
     base_trainer,
     ef_ppo_trainer,
     ef_ppo_imitation_trainer,
+    ef_ppo_pi_star_imitation_trainer,
 )

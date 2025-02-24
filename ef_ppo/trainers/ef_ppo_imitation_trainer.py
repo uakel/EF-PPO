@@ -114,13 +114,20 @@ class EFPPOImitationTrainer(EFPPOTrainer):
     ):
         super()._finish_update(observations, muscle_states, actions, info)
         if self._discriminator_update_condition():
-            self.discriminator.update(
-                self.agent.replay.get_keys( # type: ignore
-                    "observations",
-                    "next_observations",
-                    "budgets",
-                )
+
+            learn_dict = self.agent.replay.get_keys( # type: ignore
+                "observations",
+                "next_observations",
+                "budgets",
             )
+
+            budgets = learn_dict.pop("budgets")
+            positive_budgets = budgets > 0
+
+            learn_dict["observations"] = learn_dict["observations"][positive_budgets]
+            learn_dict["next_observations"] = learn_dict["next_observations"][positive_budgets]
+
+            self.discriminator.update(learn_dict)
 
     def _test(
         self,

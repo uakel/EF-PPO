@@ -102,7 +102,7 @@ class Discriminator():
 
     def update(
         self,
-        pi_D: Dict[str, np.ndarray],
+        pi_D: Dict[Literal["observations", "next_observations"], np.ndarray],
         epochs=1
     ):
         """
@@ -249,17 +249,12 @@ class Discriminator():
     # Training helper functions
     def _data_iterator(
         self,
-        pi_D: Dict[str, np.ndarray],
+        pi_D: Dict[Literal["observations", "next_observations"], np.ndarray],
         batch_size: int=256
     ) -> Generator[Tuple[torch.Tensor, torch.Tensor], None, None]:
         """
         Generator that yields batches made from the 
         reference and learner datasets
-
-        Args:
-            pi_D: The policy dataset, a dictionary with keys
-                  "observations", "next_observations"
-            batch_size: The batch size
         """
         shortest = min(self.reference_length, 
                        len(pi_D["observations"]))
