@@ -18,13 +18,16 @@ class EFPPOTrainer(BaseTrainer):
         self,
         constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0])",
         max_budget: float = 0,
-        budget_update: Literal["paper", "modified", "none"] = "paper",
+        budget_update: Literal["paper", "modified", "sum", "none"] = "paper",
+        max_violation: float = 0,
+
         **kwargs
     ):
         super().__init__(**kwargs)
         self.constraint_function : Callable = eval(constraint_function)
         self.max_budget : float = max_budget
-        self.budget_update : Literal["paper", "modified", "none"] = budget_update
+        self.budget_update : Literal["paper", "modified", "none", "sum"] = budget_update
+        self.max_violation : float = max_violation
 
     def initialize(
         self, 
@@ -71,7 +74,6 @@ class EFPPOTrainer(BaseTrainer):
         info: Dict,
         constraint: np.ndarray
     ):
-        rewards = info["rewards"]
         self._budgets = np.clip(
             (
                 self._budgets + info["rewards"] 
@@ -88,6 +90,21 @@ class EFPPOTrainer(BaseTrainer):
     ):
         pass
 
+    def _sum_budget_update(
+        self,
+        info: Dict,
+        constraint: np.ndarray
+    ):
+        self._budgets = np.clip(
+            (
+                self._budgets + info["rewards"] 
+                + info["const_fn_eval"]
+                - (1 - self.discount) * self.max_violation
+            ) / self.discount, 
+            -self.max_budget, 
+            self.max_budget
+        ) 
+
     def _update_budget(
         self,
         info: Dict,
@@ -97,6 +114,8 @@ class EFPPOTrainer(BaseTrainer):
             self._paper_budget_update(info, constraint)
         elif self.budget_update == "modified":
             self._modified_budget_update(info, constraint)
+        elif self.budget_update == "sum":
+            self._sum_budget_update(info, constraint)
         else:
             self._constant_budget_update(info, constraint)
 

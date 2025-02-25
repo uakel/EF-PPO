@@ -267,7 +267,7 @@ class EF_PPO(Agent):
 
         actor_critic_iterations = 0
         keys = ("observations", "budgets", "actions", "Q_h", 
-                "Q_l", "EF_COCP_advantages", "log_probs")
+                "Q_r", "EF_COCP_advantages", "log_probs")
 
         # Update both the actor and the critic multiple times.
         for batch in self.replay.get(*keys):
@@ -345,7 +345,7 @@ class EF_PPO(Agent):
                 obs_and_budget).numpy(force=True).flatten()
             l_values = self.model.l_critic(
                 obs_and_budget).numpy(force=True).flatten()
-        return np.maximum(h_values, l_values - budgets)
+        return -np.minimum(h_values, l_values + budgets)
 
 
     def _update_actor_critic(
@@ -354,7 +354,7 @@ class EF_PPO(Agent):
         budgets,
         actions,
         Q_h,
-        Q_l,
+        Q_r,
         EF_COCP_advantages,
         log_probs,
         fine_tune=False
@@ -364,12 +364,12 @@ class EF_PPO(Agent):
         """
         obs_and_budget = self.budget_augmented_obs(observations, budgets)
         h_critic_infos = self.h_critic_updater(obs_and_budget, Q_h)
-        l_critic_infos = self.l_critic_updater(obs_and_budget, Q_l)
+        l_critic_infos = self.l_critic_updater(obs_and_budget, Q_r)
         if not fine_tune:
             actor_infos = self.actor_updater(
                 obs_and_budget, 
                 actions, 
-                -EF_COCP_advantages,
+                EF_COCP_advantages,
                 log_probs
             )
         return dict(actor=None if fine_tune else actor_infos, 
@@ -412,3 +412,25 @@ class DEP_EF_PPO(EF_PPO):
         self.last_observations = observations.copy()
         self.last_actions = dep_actions.copy()
         return dep_actions
+
+class SUM_EF_PPO(EF_PPO):
+    def __init__(self, *args, **kwargs):
+        if "max_violation" not in kwargs:
+            kwargs["max_violation"] = 0
+        self.max_violation = kwargs.pop("max_violation", 0)
+        super().__init__(*args, **kwargs)
+
+    def _compute_v_total(self, observations, budgets):
+        """
+        Compute the value function of the EF-COCP
+        """
+        observations = torch.as_tensor(observations, dtype=torch.float32) 
+        t_budgets = torch.as_tensor(budgets, dtype=torch.float32) 
+
+        obs_and_budget = self.budget_augmented_obs(observations, t_budgets)
+        with torch.no_grad():
+            h_values = self.model.h_critic(
+                obs_and_budget).numpy(force=True).flatten()
+            l_values = self.model.l_critic(
+                obs_and_budget).numpy(force=True).flatten()
+        return -np.minimum(self.max_violation - h_values, l_values + budgets)

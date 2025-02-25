@@ -24,7 +24,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         discriminator_mean_discounting: float=0.9999,
         imitation_reward_weight: float=0.0,
         imitation_constraint_weight: float=1.0,
-        imitation_constraint_slack: float=0.2,
+        imitation_constraint_slack: float=0.05,
 
         # Discriminator training settings
         discriminator_optimizer: torch.optim.Optimizer=torch.optim.Adam, # type: ignore

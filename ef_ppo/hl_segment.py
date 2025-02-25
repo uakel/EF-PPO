@@ -13,8 +13,8 @@ class HLSegment(Segment):
         batch_size=None,
         discount_factor=0.97,
         trace_decay=0.95,
-        h_term_penalty=None,
-        l_term_penalty=None,
+        h_term_penalty=0,
+        l_term_penalty=0,
     ):
         self.steps_before_batches = -1
         self.trace_decay_sum_weights = np.array(
@@ -37,10 +37,11 @@ class HLSegment(Segment):
         """
         return {k: flatten_batch(self.buffers[k]) for k in keys} # type: ignore
 
+
     def compute_GAEs(
         self,
         l_bootstrap,
-        next_l_bootstrap,
+        next_r_bootstrap,
         h_bootstrap,
         next_h_bootstrap
     ):
@@ -58,18 +59,18 @@ class HLSegment(Segment):
                                          = next_h_bootstrap.reshape(shape)
         self.buffers["l_bootstrap"] = l_bootstrap \
                                     = l_bootstrap.reshape(shape)
-        self.buffers["next_l_bootstrap"] = next_l_bootstrap \
-                                         = next_l_bootstrap.reshape(shape)
+        self.buffers["next_l_bootstrap"] = next_r_bootstrap \
+                                         = next_r_bootstrap.reshape(shape)
 
         # Define array holding the lambda-return style
         # estimates of action-value functions
         Q_h = np.zeros(shape, dtype=np.float32) 
-        Q_l = np.zeros(shape, dtype=np.float32) 
+        Q_r = np.zeros(shape, dtype=np.float32) 
         Q_tot = np.zeros(shape, dtype=np.float32)
 
-        # Get the constraint function evaluations and costs
+        # Get the constraint function evaluations and rewards
         const_fn_evals = self.buffers["const_fn_eval"]
-        costs = -self.buffers["rewards"]
+        rewards = self.buffers["rewards"]
 
         # Get budgets
         budgets = self.buffers["budgets"]
@@ -77,16 +78,10 @@ class HLSegment(Segment):
         # Get resets and terminations
         resets = self.buffers["resets"].astype(bool)
         terminations = self.buffers["terminations"]
-        h_term_penalty = self.h_term_penalty if self.h_term_penalty \
-                                             is not None \
-                                             else np.max(h_bootstrap) * 1.5
-        l_term_penalty = self.l_term_penalty if self.l_term_penalty \
-                                             is not None \
-                                             else np.max(l_bootstrap) * 1.5
 
         # Initialize n-step estimates
         n_step_Q_h_estimates = np.zeros(shape, dtype=np.float32)
-        n_step_Q_l_estimates = np.zeros(shape, dtype=np.float32)
+        n_step_Q_r_estimates = np.zeros(shape, dtype=np.float32)
         
         # Initialize sum coefficients
         sum_coefficients = np.zeros(shape, dtype=np.float32)
@@ -103,23 +98,21 @@ class HLSegment(Segment):
             n_step_Q_h_estimates[it] = next_h_bootstrap[t]
             n_step_Q_h_estimates[it] *= (1 - terminations[t].astype(int))
             n_step_Q_h_estimates[it] += terminations[t].astype(int) * \
-                h_term_penalty
-            n_step_Q_l_estimates[it] = next_l_bootstrap[t]
-            n_step_Q_l_estimates[it] *= (1 - terminations[t].astype(int))
-            n_step_Q_l_estimates[it] += terminations[t].astype(int) * \
-                l_term_penalty
+                self.h_term_penalty
+            n_step_Q_r_estimates[it] = next_r_bootstrap[t]
+            n_step_Q_r_estimates[it] *= (1 - terminations[t].astype(int))
+            n_step_Q_r_estimates[it] += terminations[t].astype(int) * \
+                self.l_term_penalty
 
             # Use recursive rule to calculate the n-step estimates from
             # last iterations n-step estimates
-            n_step_Q_h_estimates = np.maximum(
-                const_fn_evals[t], 
-                (1 - self.discount_factor) * const_fn_evals[t] +
-                self.discount_factor * n_step_Q_h_estimates 
-            )
-            n_step_Q_l_estimates = costs[t] + \
-                self.discount_factor * n_step_Q_l_estimates 
-            n_step_Q_tot_estimates = np.maximum(n_step_Q_h_estimates, 
-                n_step_Q_l_estimates - budgets[t])
+            n_step_Q_h_estimates = self._h_reduce(const_fn_evals[t],
+                                                  n_step_Q_h_estimates)
+            n_step_Q_r_estimates = self._r_reduce(rewards[t],
+                                                  n_step_Q_r_estimates)
+            n_step_Q_tot_estimates = self._q_tot_map(n_step_Q_h_estimates,
+                                                     n_step_Q_r_estimates,
+                                                     budgets[t])
 
             # Generate sum coefficients
             sum_coefficients[:, :] = 0.0
@@ -135,8 +128,8 @@ class HLSegment(Segment):
                 sum_coefficients * n_step_Q_h_estimates, 
                 axis=0
             ) / normalization
-            Q_l[t] = np.sum(
-                sum_coefficients * n_step_Q_l_estimates,
+            Q_r[t] = np.sum(
+                sum_coefficients * n_step_Q_r_estimates,
                 axis=0
             ) / normalization 
             Q_tot[t] = np.sum(
@@ -150,8 +143,92 @@ class HLSegment(Segment):
 
 
         self.buffers["Q_h"] = Q_h
-        self.buffers["Q_l"] = Q_l
+        self.buffers["Q_r"] = Q_r
         self.buffers["Q_tot"] = Q_tot
         self.buffers["EF_COCP_advantages"] = \
-            Q_tot - np.maximum(h_bootstrap, l_bootstrap - budgets)
+            Q_tot - self._base_line_map(h_bootstrap, l_bootstrap, budgets)
+        # self.buffers["EF_COCP_advantages"] *= -1
+
+    def _sum_reduce(
+        self,
+        evals,
+        estimates,
+    ):
+        return evals + self.discount_factor * estimates
+
+    def _min_reduce(
+        self,
+        evals,
+        estimates,
+    ):
+        g = self.discount_factor
+        return np.minimum(-evals, -(1 - g) * evals + g * estimates)
+
+    def _h_reduce(
+        self,
+        evals,
+        estimates,
+    ):
+        return self._min_reduce(evals, estimates)
+
+    def _r_reduce(
+        self,
+        evals,
+        estimates,
+    ):
+        return self._sum_reduce(evals, estimates)
+
+    def _q_tot_map(
+        self,
+        q_h_estimates,
+        q_l_estimates,
+        budgets,
+    ):
+        return np.minimum(q_h_estimates, q_l_estimates + budgets)
+    
+    def _base_line_map(
+        self,
+        v_h_estimates,
+        v_l_estimates,
+        budgets,
+    ):
+        return np.minimum(v_h_estimates, v_l_estimates + budgets)
+
+class SumHLSegment(HLSegment):
+    def __init__(
+        self,
+        max_violation=0,
+        size=128,
+        batch_iterations=5,
+        batch_size=None,
+        discount_factor=0.97,
+        trace_decay=0.95,
+        h_term_penalty=0,
+        l_term_penalty=0
+    ):
+        self.max_violation = max_violation
+        super().__init__(size, batch_iterations, batch_size, discount_factor, trace_decay, h_term_penalty, l_term_penalty)
+
+    def _h_reduce(
+        self,
+        evals,
+        estimates,
+    ):
+        return self._sum_reduce(evals, estimates)
+
+    def _q_tot_map(
+        self,
+        q_h_estimates,
+        q_l_estimates,
+        budgets,
+    ):
+        return np.minimum(self.max_violation - q_h_estimates, q_l_estimates + budgets)
+
+    def _base_line_map(
+        self,
+        v_h_estimates,
+        v_l_estimates,
+        budgets,
+    ):
+        return np.minimum(self.max_violation - v_h_estimates, v_l_estimates + budgets)
 
