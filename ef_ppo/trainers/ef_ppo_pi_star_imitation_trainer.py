@@ -10,7 +10,7 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
     """
     def __init__(
         self,
-        pi_star_rollout_length: int = 10000,
+        pi_star_rollout_length: int = 257,
         reset_discriminator_every: int = int(1e99),
         **kwargs,
     ):

@@ -24,7 +24,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         discriminator_mean_discounting: float=0.9999,
         imitation_reward_weight: float=0.0,
         imitation_constraint_weight: float=1.0,
-        imitation_constraint_slack: float=0.05,
+        imitation_constraint_slack: float=0.2,
 
         # Discriminator training settings
         discriminator_optimizer: torch.optim.Optimizer=torch.optim.Adam, # type: ignore
@@ -67,6 +67,10 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         info: Dict
     ):
         super()._finish_env_step(observations, muscle_states, actions, info)
+        # const_fn_eval = self.constraint_function(observations, muscle_states)
+        # info["const_fn_eval"] = const_fn_eval
+        # info["budgets"] = self._budgets.copy()
+
         pred = self.discriminator.predict(
             self.agent.last_observations, # type: ignore
             observations,
@@ -89,6 +93,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
                 info["const_fn_eval"],
                 discriminator_constraint
             )
+        # self._update_budget(info, info["const_fn_eval"])
 
     def _discriminator_update_condition(self) -> bool:
         """

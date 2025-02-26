@@ -5,6 +5,7 @@ Base Trainer Class
 from typing import *
 from deprl.vendor.tonic.agents import Agent
 from deprl.custom_distributed import Parallel, Sequential
+from ef_ppo.ef_ppo import EF_PPO
 
 # Logging
 from ef_ppo import logger
@@ -31,12 +32,13 @@ class EFPPOTrainer(BaseTrainer):
 
     def initialize(
         self, 
-        agent: Agent, 
+        agent: EF_PPO, 
         environment: Parallel | Sequential, 
         test_environment: Parallel | Sequential | None = None,
         full_save: bool = False
     ):
         super().initialize(agent, environment, test_environment, full_save)
+        self.agent: EF_PPO = agent
         self.agent.max_budget = self.max_budget
 
     def _prepare_run(
