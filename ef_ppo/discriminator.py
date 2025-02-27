@@ -45,7 +45,7 @@ class Discriminator():
         exponential_mean_discounting: float =0.9999,
         imitation_reward_weight: float =1.0,
         imitation_constraint_weight: float =1.0,
-        imitation_constraint_slack: float =0.1,
+        imitation_constraint_slack: float =0.05,
         activation: torch.nn.Module = torch.nn.ReLU,  
         elementwise_loss: ELEMENTWISE_LOSS_TYPE = "smooth_l1",
         optimizer: torch.optim.Optimizer = torch.optim.Adam,
@@ -53,7 +53,7 @@ class Discriminator():
         batch_size: int = 32,
         weight_imitation: float = 1.0,
         weight_gradient_penalty: float = 0,
-        gradient_steps: int | float = 8,
+        gradient_steps: int | float = 1000 // 32,
         device: Literal["cuda", "cpu"] = "cuda",
     ):
         # Reference dataset

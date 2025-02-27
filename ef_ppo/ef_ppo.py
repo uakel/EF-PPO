@@ -8,7 +8,7 @@ from deprl.vendor.tonic.torch import normalizers
 from ef_ppo import critics as critic_updaters
 from deprl.vendor.tonic.torch import updaters
 from ef_ppo.hl_segment import HLSegment
-from ef_ppo.utils import n_sect
+from ef_ppo.utils import find_root
 from deprl.dep_controller import DEP
 
 # Defaults
@@ -158,7 +158,7 @@ class EF_PPO(Agent):
             np.repeat(observations, len(budget), axis=0),
             budget
         )
-        budget_star = n_sect(fixed_obs_value, 
+        budget_star = find_root(fixed_obs_value, 
                              -self.max_budget,
                              self.max_budget)
         budget_star = np.array([budget_star])
@@ -181,22 +181,25 @@ class EF_PPO(Agent):
         """
         Return the action from the policy that solves the 
         EF-COCP outer problem
-        """
-        # Make observations 2d
-        observations = np.atleast_2d(observations)
 
+        Args:
+            observations: np.ndarray of shape (dims, d)
+
+        Returns:
+            np.ndarray of shape (dims, d_a)
+        """
         # Get maximum z by performing n-section of the value function
         fixed_obs_value = lambda budget: self._compute_v_total(
-            np.repeat(observations, len(budget), axis=0),
+            np.repeat(observations[..., None, :],
+                      budget.shape[-1],
+                      axis=-2),
             budget
         )
-        budget_star = n_sect(fixed_obs_value, 
-                             -self.max_budget,
-                             self.max_budget)
-        budget_star = np.array([budget_star]) 
+        budget_star = find_root(fixed_obs_value, 
+                             -self.max_budget * np.ones(observations.shape[:-1]),
+                             self.max_budget * np.ones(observations.shape[:-1]))
 
         # Return optimal action
-        
         return self._step(observations, budget_star)[0], budget_star
     
 
@@ -298,10 +301,17 @@ class EF_PPO(Agent):
     def budget_augmented_obs(self, observations, budgets):
         """
         Method to create a vector that contains the observation and the budget
+
+        Args:
+            observations: torch.Tensor of shape (dims, d)
+            budgets: torch.Tensor of shape (dims,)
+
+        Returns:
+            torch.Tensor of shape (dims, d + 1)
         """
         return torch.cat((observations, 
-                          budgets[:, None] / 
-                          self.budget_normalizer), dim=1)
+                          budgets[..., None] / 
+                          self.budget_normalizer), dim=-1)
 
 
     def _evaluate(self, observations, budgets, next_observations, next_budgets):
@@ -335,6 +345,13 @@ class EF_PPO(Agent):
     def _compute_v_total(self, observations, budgets):
         """
         Compute the value function of the EF-COCP
+
+        Args:
+            observations: np.ndarray of shape (dims, d)
+            budgets: np.ndarray of shape (dims,)
+
+        Returns:
+            np.ndarray of shape (dims,)
         """
         observations = torch.as_tensor(observations, dtype=torch.float32) 
         t_budgets = torch.as_tensor(budgets, dtype=torch.float32) 
@@ -342,11 +359,10 @@ class EF_PPO(Agent):
         obs_and_budget = self.budget_augmented_obs(observations, t_budgets)
         with torch.no_grad():
             h_values = self.model.h_critic(
-                obs_and_budget).numpy(force=True).flatten()
+                obs_and_budget).numpy(force=True)
             l_values = self.model.l_critic(
-                obs_and_budget).numpy(force=True).flatten()
-        return -np.minimum(h_values, l_values + budgets)
-
+                obs_and_budget).numpy(force=True)
+        return np.minimum(h_values, l_values + budgets)
 
     def _update_actor_critic(
         self, 
@@ -430,7 +446,7 @@ class SUM_EF_PPO(EF_PPO):
         obs_and_budget = self.budget_augmented_obs(observations, t_budgets)
         with torch.no_grad():
             h_values = self.model.h_critic(
-                obs_and_budget).numpy(force=True).flatten()
+                obs_and_budget).numpy(force=True)
             l_values = self.model.l_critic(
-                obs_and_budget).numpy(force=True).flatten()
-        return -np.minimum(self.max_violation - h_values, l_values + budgets)
+                obs_and_budget).numpy(force=True)
+        return np.minimum(self.max_violation - h_values, l_values + budgets)

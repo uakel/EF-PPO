@@ -10,7 +10,7 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
     """
     def __init__(
         self,
-        pi_star_rollout_length: int = 257,
+        pi_star_rollout_length: int = 16384,
         reset_discriminator_every: int = int(1e99),
         **kwargs,
     ):
@@ -31,36 +31,29 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
 
     def _collect_pi_star_trajectories(
         self,
-        num_transitions: int
+        num_transitions: int,
+        observations: np.ndarray,
+        muscle_states: np.ndarray,
     ) -> Dict[Literal["observations", "next_observations"], np.ndarray]:
         """
         Collects trajectories using the current optimal policy
         """
-        # Start the environment if not already started
         time_start = time()
-        if not hasattr(self.test_environment, "test_observations"):
-            self.test_environment.test_observations, _ = self.test_environment.start() # type: ignore
-            assert len(self.test_environment.test_observations) == 1 # type: ignore
          
-        obs = self.test_environment.test_observations.copy() # type: ignore
-        observations = []
-        next_observations = []
-        for _ in range(num_transitions):
-            actions = self.agent.test_step(obs, self._steps) # type: ignore
-            budget_star = self.agent.budget_star # type: ignore
-            obs, _, _ = self.test_environment.step(actions) # type: ignore
-            observations.append(self.agent.last_observations.flatten().copy()) # type: ignore
-            next_observations.append(obs.flatten().copy()) # type: ignore
-
-            # Log the budget_star
-            logger.store("imitation/discriminator_training/budget_star", budget_star, stat_level="msM")
+        observation_buffer = []
+        next_observation_buffer = []
+        for _ in range(num_transitions // self._num_workers + 1):
+            actions = self.agent.test_step(observations, self._steps, muscle_states) # type: ignore
+            observations, _, _ = self.environment.step(actions) # type: ignore
+            observation_buffer.append(self.agent.last_observations.copy()) # type: ignore
+            next_observation_buffer.append(observations.copy()) # type: ignore
 
         logger.store("imitation/discriminator_training/"
                      "collect_pi_star_trajectories_time",
                      time() - time_start)
         return {
-            "observations": np.array(observations),
-            "next_observations": np.array(next_observations)
+            "observations": np.concatenate(observation_buffer),
+            "next_observations": np.concatenate(next_observation_buffer),
         }
 
     def _finish_update(
@@ -81,6 +74,8 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
         if self._discriminator_update_condition():
             self.discriminator.update(
                 self._collect_pi_star_trajectories(
-                    self.pi_star_rollout_length
+                    self.pi_star_rollout_length,
+                    observations,
+                    muscle_states,
                 )
             )

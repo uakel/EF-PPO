@@ -24,30 +24,24 @@ def discounted_constraint_score(constraint_fn_evals, discount):
         scores[i] = carry
     return scores
 
-def n_sect(function, x_min, x_max, n_iter=2, n=20):
+def find_root(function, x_min, x_max, n=20):
     """
     parallel scalar root finding
 
     Args:
-        function: A function that computes 0th dimension in parallel
-        x_min: point to start n-setion from
-        x_max: point where n-section ends
-        n-iter: iteration number
-        n: number of parallel evaluations
+        function: function
+        x_min: np.array of dim (dim,)
+        x_max: np.array of dim (dim,)
+        n: number of samples
+
+    Returns:
+        np.array of dim (dim,)
     """
-    points = np.linspace(x_min, x_max, n)
-    evaluations = function(points).flatten()
-    if all(evaluations >= 0):
-        return points[np.argmin(evaluations)]
-    if all(evaluations <= 0):
-        return x_min
-    down_flips = (evaluations[:-1] >= 0) & (evaluations[1:] < 0)
-    if sum(down_flips) == 0:
-        return x_max
-    if n_iter == 0:
-        return points[1:][down_flips][0]
-    return n_sect(function, 
-                  points[:-1][down_flips][0],
-                  points[1:][down_flips][0], 
-                  n_iter=n_iter-1, 
-                  n=n) 
+    search_space = np.linspace(x_min, x_max, n, axis=-1)
+    evals = function(search_space)
+
+    indices = np.argmin(np.abs(evals), axis=-1, keepdims=True)
+    return np.take_along_axis(search_space, indices, axis=-1)[..., 0]
+
+
+

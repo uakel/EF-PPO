@@ -146,7 +146,7 @@ class HLSegment(Segment):
         self.buffers["Q_r"] = Q_r
         self.buffers["Q_tot"] = Q_tot
         self.buffers["EF_COCP_advantages"] = \
-            Q_tot - self._base_line_map(h_bootstrap, l_bootstrap, budgets)
+            Q_tot - self._base_line(h_bootstrap, l_bootstrap, budgets)
         # self.buffers["EF_COCP_advantages"] *= -1
 
     def _sum_reduce(
@@ -186,7 +186,7 @@ class HLSegment(Segment):
     ):
         return np.minimum(q_h_estimates, q_l_estimates + budgets)
     
-    def _base_line_map(
+    def _base_line(
         self,
         v_h_estimates,
         v_l_estimates,
