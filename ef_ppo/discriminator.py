@@ -47,7 +47,7 @@ class Discriminator():
         imitation_constraint_weight: float =1.0,
         imitation_constraint_slack: float =0.05,
         activation: torch.nn.Module = torch.nn.ReLU,  
-        elementwise_loss: ELEMENTWISE_LOSS_TYPE = "smooth_l1",
+        elementwise_loss: ELEMENTWISE_LOSS_TYPE = "bce",
         optimizer: torch.optim.Optimizer = torch.optim.Adam,
         optimizer_kwargs: Dict ={"lr": 1e-4},
         batch_size: int = 32,

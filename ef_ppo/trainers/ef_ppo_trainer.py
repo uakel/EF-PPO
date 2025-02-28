@@ -17,11 +17,11 @@ import numpy as np
 class EFPPOTrainer(BaseTrainer):
     def __init__(
         self,
-        constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0])",
+        constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0]) * 999",
         max_budget: float = 0,
         budget_update: Literal["paper", "modified", "sum", "none"] = "paper",
         max_violation: float = 0,
-
+        constraint_type: Literal["sum", "max"] = "sum",
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -29,6 +29,7 @@ class EFPPOTrainer(BaseTrainer):
         self.max_budget : float = max_budget
         self.budget_update : Literal["paper", "modified", "none", "sum"] = budget_update
         self.max_violation : float = max_violation
+        self.constraint_type : Literal["sum", "max"] = constraint_type
 
     def initialize(
         self, 
@@ -148,13 +149,17 @@ class EFPPOTrainer(BaseTrainer):
             high=self.max_budget, 
             size=ends.sum()
         )
-        self._constraint_returns = np.maximum(
-            self._constraint_returns, 
-            (1 - self.discount) * self._aleph 
-            + self.discount ** self._lengths * info["const_fn_eval"]
-        )
+        if self.constraint_type == "max":
+            self._constraint_returns = np.maximum(
+                self._constraint_returns, 
+                (1 - self.discount) * self._aleph 
+                + self.discount ** self._lengths * info["const_fn_eval"]
+            )
         self._aleph = self._aleph + self.discount ** self._lengths\
-            * info["const_fn_eval"]
+                * info["const_fn_eval"]
+        if self.constraint_type == "sum":
+            self._constraint_returns = self._aleph
+
 
     def _test(
         self,

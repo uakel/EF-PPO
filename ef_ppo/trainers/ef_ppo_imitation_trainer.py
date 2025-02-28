@@ -24,11 +24,11 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         discriminator_mean_discounting: float=0.9999,
         imitation_reward_weight: float=0.0,
         imitation_constraint_weight: float=1.0,
-        imitation_constraint_slack: float=0.05,
+        imitation_constraint_slack: float=0.2,
 
         # Discriminator training settings
         discriminator_optimizer: torch.optim.Optimizer=torch.optim.Adam, # type: ignore
-        optimizer_kwargs: Dict=dict(lr=1e-4),
+        optimizer_kwargs: Dict=dict(lr=0.7e-4),
         discriminator_batch_size: int=32,
         discriminator_loss_imiation_weight: float=0.5,
         discriminator_loss_gradience_penalty_weight: float=0.0,
@@ -66,10 +66,8 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         actions: np.ndarray,
         info: Dict
     ):
-        super()._finish_env_step(observations, muscle_states, actions, info)
-        # const_fn_eval = self.constraint_function(observations, muscle_states)
-        # info["const_fn_eval"] = const_fn_eval
-        # info["budgets"] = self._budgets.copy()
+        const_fn_eval = self.constraint_function(observations, muscle_states)
+        info["const_fn_eval"] = const_fn_eval
 
         pred = self.discriminator.predict(
             self.agent.last_observations, # type: ignore
@@ -83,7 +81,6 @@ class EFPPOImitationTrainer(EFPPOTrainer):
         )
         self.discriminator.update_mean_and_var(pred)
 
-
         info["rewards"] *= self.environment_reward_weight
         info["rewards"] += discriminator_reward
         if self.environment_constraint_weight > 0:
@@ -93,7 +90,8 @@ class EFPPOImitationTrainer(EFPPOTrainer):
                 info["const_fn_eval"],
                 discriminator_constraint
             )
-        # self._update_budget(info, info["const_fn_eval"])
+        self._update_budget(info, info["const_fn_eval"])
+        info["budgets"] = self._budgets.copy()
 
     def _discriminator_update_condition(self) -> bool:
         """
