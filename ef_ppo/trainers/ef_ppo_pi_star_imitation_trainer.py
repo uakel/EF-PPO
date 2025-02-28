@@ -42,7 +42,7 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
          
         observation_buffer = []
         next_observation_buffer = []
-        for _ in range(num_transitions // self._num_workers + 1):
+        for _ in range(num_transitions // self._num_workers):
             actions = self.agent.test_step(observations, self._steps, muscle_states) # type: ignore
             observations, _, _ = self.environment.step(actions) # type: ignore
             observation_buffer.append(self.agent.last_observations.copy()) # type: ignore
@@ -63,12 +63,6 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
         actions: np.ndarray,
         info: Dict,
     ):
-        super(EFPPOImitationTrainer, self)._finish_update(
-            observations,
-            muscle_states,
-            actions,
-            info
-        )
         if self.n_discriminator_updates % self.reset_discriminator_every == 0:
             self.discriminator.reset_regressor()
         if self._discriminator_update_condition():
@@ -79,3 +73,9 @@ class EFPPOPiStarImitationTrainer(EFPPOImitationTrainer):
                     muscle_states,
                 )
             )
+        super(EFPPOImitationTrainer, self)._finish_update(
+            observations,
+            muscle_states,
+            actions,
+            info
+        )

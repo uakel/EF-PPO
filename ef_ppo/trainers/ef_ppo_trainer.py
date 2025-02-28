@@ -34,8 +34,8 @@ class EFPPOTrainer(BaseTrainer):
     def initialize(
         self, 
         agent: EF_PPO, 
-        environment: Parallel | Sequential, 
-        test_environment: Parallel | Sequential | None = None,
+        environment: Union[Parallel, Sequential], 
+        test_environment: Union[Parallel, Sequential, None] = None,
         full_save: bool = False
     ):
         super().initialize(agent, environment, test_environment, full_save)

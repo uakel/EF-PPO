@@ -22,14 +22,14 @@ class BaseTrainer:
     """
     def __init__(
         self,
-        steps : int               = int(4096 * 16 * 4 * 10 * 256),
-        epoch_steps : int         = int(4096 * 16 * 4 * 10),
-        save_steps : int          = int(4096 * 16 * 4 * 10),
-        test_episodes : int       = 20,
-        test_fn : str | None      = None, # "module_name:fn_name"
-        discount: float           = 0.99,
-        show_progress : bool      = True,
-        data_path : Callable      = lambda env: env.environments[0].unwrapped.sim.data,
+        steps : int                = int(4096 * 16 * 4 * 10 * 256),
+        epoch_steps : int          = int(4096 * 16 * 4 * 10),
+        save_steps : int           = int(4096 * 16 * 4 * 10),
+        test_episodes : int        = 20,
+        test_fn : Union[str, None] = None, # "module_name:fn_name"
+        discount: float            = 0.99,
+        show_progress : bool       = True,
+        data_path : Callable       = lambda env: env.environments[0].unwrapped.sim.data,
     ): 
         """
         Note: test_fn has to have the following signature:
@@ -58,16 +58,16 @@ class BaseTrainer:
     def initialize(
         self, 
         agent : Agent,
-        environment : Parallel | Sequential,
-        test_environment : Parallel | Sequential | None = None,
+        environment : Union[Parallel, Sequential],
+        test_environment : Union[Parallel, Sequential, None] = None,
         full_save : bool                                = False,
     ):
         """
         Initialize the trainer
         """
         self.agent : Agent = agent
-        self.environment : Parallel | Sequential = environment
-        self.test_environment : Parallel | Sequential | None = test_environment
+        self.environment : Union[Parallel, Sequential] = environment
+        self.test_environment : Union[Parallel, Sequential, None] = test_environment
         self.full_save : bool = full_save
 
     def run(

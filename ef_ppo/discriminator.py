@@ -53,7 +53,7 @@ class Discriminator():
         batch_size: int = 32,
         weight_imitation: float = 1.0,
         weight_gradient_penalty: float = 0,
-        gradient_steps: int | float = 1000 // 32,
+        gradient_steps: Union[int, float] = 1000 // 32,
         device: Literal["cuda", "cpu"] = "cuda",
     ):
         # Reference dataset
