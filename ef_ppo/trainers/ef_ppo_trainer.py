@@ -4,7 +4,7 @@ Base Trainer Class
 # Typing
 from typing import *
 from deprl.vendor.tonic.agents import Agent
-from deprl.custom_distributed import Parallel, Sequential
+from ef_ppo.custom_distributed import Parallel, Sequential
 from ef_ppo.ef_ppo import EF_PPO
 
 # Logging
@@ -18,6 +18,7 @@ class EFPPOTrainer(BaseTrainer):
     def __init__(
         self,
         constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0]) * 999",
+        use_env_constraint: bool = False,
         max_budget: float = 0,
         budget_update: Literal["paper", "modified", "sum", "none"] = "paper",
         max_violation: float = 0,
@@ -26,12 +27,14 @@ class EFPPOTrainer(BaseTrainer):
     ):
         super().__init__(**kwargs)
         self.constraint_function : Callable = eval(constraint_function)
+        self.use_env_constraint : bool = use_env_constraint
+
         self.max_budget : float = max_budget
         self.budget_update : Literal["paper", "modified", "none", "sum"] = budget_update
         self.max_violation : float = max_violation
         self.constraint_type : Literal["sum", "max"] = constraint_type
 
-    def initialize(
+    def initialize( # type: ignore
         self, 
         agent: EF_PPO, 
         environment: Union[Parallel, Sequential], 
@@ -130,7 +133,11 @@ class EFPPOTrainer(BaseTrainer):
         info: Dict
     ):
         super()._finish_env_step(observations, muscle_states, actions, info)
-        const_fn_eval = self.constraint_function(observations, muscle_states)
+        if self.use_env_constraint:
+            const_fn_eval = info["constraint"]
+            info.pop("constraint")
+        else:
+            const_fn_eval = self.constraint_function(observations, muscle_states) # type: ignore
         info["const_fn_eval"] = const_fn_eval
         self._update_budget(info, const_fn_eval)
         info["budgets"] = self._budgets.copy()

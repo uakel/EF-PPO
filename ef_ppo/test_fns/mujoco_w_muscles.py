@@ -95,7 +95,7 @@ def test(
 
             # Save effort
             metrics["test/effort"] += np.mean(
-                np.square(data_path(env).act)
+                np.square(measurements["act"])
             )
             metrics["test/terminated"] += int(info["terminations"])
             if eval_rwd_metrics:

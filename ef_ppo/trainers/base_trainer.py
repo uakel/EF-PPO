@@ -4,7 +4,7 @@ Base Trainer Class
 # Typing
 from typing import *
 from deprl.vendor.tonic.agents import Agent
-from deprl.custom_distributed import Parallel, Sequential
+from ef_ppo.custom_distributed import Parallel, Sequential
 
 # Logging
 import os

@@ -4,7 +4,7 @@ import traceback
 
 import torch
 
-from deprl import custom_distributed
+from ef_ppo import custom_distributed
 from deprl.utils import load_checkpoint, prepare_params
 from ef_ppo import logger
 
