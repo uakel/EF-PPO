@@ -71,7 +71,7 @@ def test(
             obs = naked_env.store_next_episode()[None, :]
         else:
             obs = naked_env.reset()[None, :] # type: ignore
-        while True:
+        for i in range(1000):
             actions = agent.test_step(obs, steps) # type: ignore
             const_fn_evals = constraint_function(obs, naked_env.muscle_states)[0] # type: ignore
             budget_star = agent.budget_star.copy()
@@ -89,6 +89,8 @@ def test(
                 budget_star=budget_star,
             )
 
+            if i == 997:
+                naked_env.write_now()
             if info["resets"][0]:
                 log(
                     episode_length=length,
