@@ -135,9 +135,9 @@ class EFPPOTrainer(BaseTrainer):
         super()._finish_env_step(observations, muscle_states, actions, info)
         if self.use_env_constraint:
             const_fn_eval = info["constraint"]
-            info.pop("constraint")
         else:
             const_fn_eval = self.constraint_function(observations, muscle_states) # type: ignore
+        info.pop("constraint")
         info["const_fn_eval"] = const_fn_eval
         self._update_budget(info, const_fn_eval)
         info["budgets"] = self._budgets.copy()

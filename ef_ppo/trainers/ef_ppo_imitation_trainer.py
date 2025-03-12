@@ -90,6 +90,7 @@ class EFPPOImitationTrainer(EFPPOTrainer):
                 info["const_fn_eval"],
                 discriminator_constraint
             )
+        info.pop("constraint")
         self._update_budget(info, info["const_fn_eval"])
         info["budgets"] = self._budgets.copy()
 
