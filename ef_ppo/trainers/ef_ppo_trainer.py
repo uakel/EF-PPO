@@ -19,6 +19,7 @@ class EFPPOTrainer(BaseTrainer):
         self,
         constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0]) * 999",
         use_env_constraint: bool = False,
+        min_budget: float = 0,
         max_budget: float = 0,
         budget_update: Literal["paper", "modified", "sum", "none"] = "paper",
         max_violation: float = 0,
@@ -29,6 +30,7 @@ class EFPPOTrainer(BaseTrainer):
         self.constraint_function : Callable = eval(constraint_function)
         self.use_env_constraint : bool = use_env_constraint
 
+        self.min_budget : float = min_budget
         self.max_budget : float = max_budget
         self.budget_update : Literal["paper", "modified", "none", "sum"] = budget_update
         self.max_violation : float = max_violation
@@ -44,6 +46,7 @@ class EFPPOTrainer(BaseTrainer):
         super().initialize(agent, environment, test_environment, full_save)
         self.agent: EF_PPO = agent
         self.agent.max_budget = self.max_budget
+        self.agent.min_budget = self.min_budget
 
     def _prepare_run(
             self,
@@ -51,7 +54,7 @@ class EFPPOTrainer(BaseTrainer):
             muscle_states: np.ndarray,
             num_workers: int
     ):
-        self._budgets = np.random.uniform(low=0, high=self.max_budget, size=num_workers)
+        self._budgets = np.random.uniform(low=self.min_budget, high=self.max_budget, size=num_workers)
         self._constraint_returns = np.ones(num_workers, float) * -np.inf
         self._aleph = np.zeros(num_workers, float)
         super()._prepare_run(observations, muscle_states, num_workers)
@@ -85,7 +88,7 @@ class EFPPOTrainer(BaseTrainer):
                 self._budgets + info["rewards"] 
                 + (1 - self.discount) * info["const_fn_eval"]
             ) / self.discount, 
-            -self.max_budget, 
+            self.min_budget, 
             self.max_budget
         ) 
 
@@ -107,7 +110,7 @@ class EFPPOTrainer(BaseTrainer):
                 + info["const_fn_eval"]
                 - (1 - self.discount) * self.max_violation
             ) / self.discount, 
-            -self.max_budget, 
+            self.min_budget, 
             self.max_budget
         ) 
 
@@ -152,7 +155,7 @@ class EFPPOTrainer(BaseTrainer):
         super()._finish_update(observations, muscle_states, actions, info)
         ends = info["terminations"] | info["resets"]
         self._budgets[ends] = np.random.uniform(
-            low=-self.max_budget,
+            low=self.min_budget,
             high=self.max_budget, 
             size=ends.sum()
         )

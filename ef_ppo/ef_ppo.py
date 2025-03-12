@@ -45,7 +45,7 @@ class EF_PPO(Agent):
     """
     def __init__(self, model=None, replay=None, actor_updater=None,
                  h_critic_updater=None, l_critic_updater=None, log=True,
-                 budget_normalizer=1.0, max_budget=2.7):
+                 budget_normalizer=1.0, min_budget=-2.7, max_budget=2.7):
         """
         Instantiate the agent.
         """
@@ -61,6 +61,7 @@ class EF_PPO(Agent):
         self.log = log
         self.budget_normalizer = budget_normalizer
         self.max_budget = max_budget
+        self.min_budget = min_budget
 
 
     def initialize(self, observation_space, action_space, seed=None):
@@ -112,6 +113,7 @@ class EF_PPO(Agent):
 
         # Augment observation
         obs_and_budget = self.budget_augmented_obs(observations, budget)
+        obs_and_budget = torch.atleast_2d(obs_and_budget)
 
         # Evaluate actor and sample action
         with torch.no_grad():
@@ -138,33 +140,35 @@ class EF_PPO(Agent):
 
         # Augment observation
         obs_and_budget = self.budget_augmented_obs(observations, budget)
+        obs_and_budget = torch.atleast_2d(obs_and_budget)
 
         # Evaluate actor and sample action
         with torch.no_grad():
             distributions = self.model.actor(obs_and_budget)
             actions = distributions.mode
 
-        return actions
+        return actions.numpy(force=True)
 
     def deterministic_opt_step(self, observations, steps, muscle_states=None):
         """
         Optimal step using the mode
         """
-        # Cast to 2d
-        observations = np.atleast_2d(observations)
 
         # Get the maximum z by performing n-section of the value function
         fixed_obs_value = lambda budget: self._compute_v_total(
-            np.repeat(observations, len(budget), axis=0),
+            np.repeat(observations[..., None, :],
+                      budget.shape[-1],
+                      axis=-2),
             budget
         )
-        budget_star = find_root(fixed_obs_value, 
-                             -self.max_budget,
-                             self.max_budget)
-        budget_star = np.array([budget_star])
+        budget_star = find_root(
+            fixed_obs_value, 
+                             self.min_budget * np.ones(observations.shape[:-1]),
+                             self.max_budget * np.ones(observations.shape[:-1]))
+        self.budget_star = budget_star.copy()
 
         # Return the action
-        return self.deterministic_step(observations, budget_star).numpy(force=True), budget_star
+        return self.deterministic_step(observations, budget_star)
 
 
     def test_step(self, observations, steps, muscle_states=None):
@@ -196,7 +200,7 @@ class EF_PPO(Agent):
             budget
         )
         budget_star = find_root(fixed_obs_value, 
-                             -self.max_budget * np.ones(observations.shape[:-1]),
+                             self.min_budget * np.ones(observations.shape[:-1]),
                              self.max_budget * np.ones(observations.shape[:-1]))
 
         # Return optimal action
@@ -362,6 +366,12 @@ class EF_PPO(Agent):
                 obs_and_budget).numpy(force=True)
             l_values = self.model.l_critic(
                 obs_and_budget).numpy(force=True)
+            # Debug
+            # import matplotlib.pyplot as plt
+            # plt.plot(budgets, h_values, label='h_values')
+            # plt.plot(budgets, l_values, label='l_values')
+            # plt.plot(budgets, budgets + l_values, label='l_values + budgets')
+            # plt.ylim([np.min(h_values), np.max(l_values)])
         return np.minimum(h_values, l_values + budgets)
 
     def _update_actor_critic(
