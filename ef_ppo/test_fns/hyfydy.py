@@ -72,12 +72,14 @@ def test(
         else:
             obs = naked_env.reset()[None, :] # type: ignore
         for i in range(1000):
-            actions = agent.test_step(obs, steps) # type: ignore
-            const_fn_evals = constraint_function(obs, naked_env.muscle_states)[0] # type: ignore
+            actions = agent.deterministic_opt_step(obs, steps) # type: ignore
             budget_star = agent.budget_star.copy()
 
             obs, _, info = env.step(actions)
+
+            const_fn_evals = float(info["constraint"].copy()) 
             r = info["rewards"][0]
+            effort = np.mean(naked_env.muscle_activity() ** 2)
 
             length += 1
             R_h, aleph = R_h_update(R_h, const_fn_evals, gamma, length, aleph)
@@ -87,6 +89,7 @@ def test(
                 rewards=r,
                 constraint_fn_evals=const_fn_evals,
                 budget_star=budget_star,
+                effort=effort
             )
 
             if i == 997:
