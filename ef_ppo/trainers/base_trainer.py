@@ -136,6 +136,8 @@ class BaseTrainer:
                 self._end_training()
                 break
 
+        return self.max_score
+
     def _prepare_run(
             self,
             observations: np.ndarray, 
@@ -217,13 +219,14 @@ class BaseTrainer:
     ):
         if not hasattr(self, "test_fn"):
             return
-        self.test_fn(
+        score = self.test_fn(
             self.test_environment,
             self.agent,
             self._steps,
             test_episodes = self.test_episodes,
             data_path = self.data_path,
         )
+        self.max_score = max(getattr(self, "max_score", 0), score)
 
     def _log_epoch_statistics(
         self,

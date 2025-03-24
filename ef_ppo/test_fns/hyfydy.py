@@ -62,6 +62,10 @@ def test(
     naked_env = env.environments[0] # type: ignore
     gamma = agent.replay.discount_factor
 
+    all_speeds = []
+    all_efforts = []
+    all_ep_lengths = []
+
     for ep in range(test_episodes):
         R_r = 0
         R_h = -np.inf
@@ -80,6 +84,10 @@ def test(
             const_fn_evals = float(info["constraint"].copy()) 
             r = info["rewards"][0]
             effort = np.mean(naked_env.muscle_activity() ** 2)
+            speed = naked_env.hyfydy_env.model_velocity()
+
+            all_speeds.append(speed)
+            all_efforts.append(effort)
 
             length += 1
             R_h, aleph = R_h_update(R_h, const_fn_evals, gamma, length, aleph)
@@ -89,7 +97,8 @@ def test(
                 rewards=r,
                 constraint_fn_evals=const_fn_evals,
                 budget_star=budget_star,
-                effort=effort
+                effort=effort,
+                speed=speed
             )
 
             if i == 997:
@@ -100,4 +109,12 @@ def test(
                     episode_return=R_r,
                     constraint_return=R_h
                 )
+                all_ep_lengths.append(length)
                 break
+    score = np.mean(1 - np.mean(all_efforts) / 0.1) * 100
+    score *= np.mean(all_ep_lengths) / 100
+    if np.mean(all_speeds) < 0.9:
+        score = 0
+    if np.mean(all_ep_lengths) < 120:
+        score = 0
+    return score

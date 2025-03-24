@@ -420,6 +420,29 @@ class DEP_EF_PPO(EF_PPO):
         super().initialize(observation_space, action_space, seed)
         self.dep.initialize(observation_space, action_space, seed)
 
+    def _evaluate_action_log_prob(self, observations, budgets, actions):
+        # # Cast to tensor
+        # with torch.no_grad():
+        #     _observations = torch.as_tensor(observations, dtype=torch.float32)
+        #     _budgets = torch.as_tensor(budgets, dtype=torch.float32)
+        #     _actions = torch.as_tensor(actions, dtype=torch.float32)
+
+        #     # Augment observation
+        #     obs_and_budget = self.budget_augmented_obs(_observations, _budgets)
+
+        #     # Evaluate actor
+        #     distributions = self.model.actor(obs_and_budget)
+
+        #     log_probs = distributions.log_prob(_actions)
+
+        #     # Handle nan values
+        #     log_probs[torch.isnan(log_probs)] = -3
+        #     if torch.any(torch.isnan(log_probs)):
+        #         import pudb; pudb.set_trace()
+        #     log_probs = log_probs.sum(dim=-1)
+        # return log_probs.numpy(force=True)
+        return np.ones(observations.shape[:-1]) * 3
+
     def step(
         self, observations, steps, budgets, muscle_states=None, greedy_episode=False
     ):
@@ -436,7 +459,11 @@ class DEP_EF_PPO(EF_PPO):
                 observations, steps, budgets, muscle_states
             )
         self.last_observations = observations.copy()
+        self.last_budgets = budgets.copy()
         self.last_actions = dep_actions.copy()
+        self.last_log_probs = self._evaluate_action_log_prob(
+            observations, budgets, dep_actions
+        )
         return dep_actions
 
 class SUM_EF_PPO(EF_PPO):
