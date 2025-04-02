@@ -43,7 +43,7 @@ class HLSegment(Segment):
         l_bootstrap,
         next_r_bootstrap,
         h_bootstrap,
-        next_h_bootstrap
+        next_h_bootstrap,
     ):
         """
         Compute the generalized advantage estimates for the modified value fkt
@@ -78,6 +78,9 @@ class HLSegment(Segment):
         # Get resets and terminations
         resets = self.buffers["resets"].astype(bool)
         terminations = self.buffers["terminations"]
+
+        # transform budgets
+        budgets = self._transform_budgets(budgets, resets, rewards, const_fn_evals)
 
         # Initialize n-step estimates
         n_step_Q_h_estimates = np.zeros(shape, dtype=np.float32)
@@ -147,7 +150,15 @@ class HLSegment(Segment):
         self.buffers["Q_tot"] = Q_tot
         self.buffers["EF_COCP_advantages"] = \
             Q_tot - self._base_line(h_bootstrap, l_bootstrap, budgets)
-        # self.buffers["EF_COCP_advantages"] *= -1
+
+    def _transform_budgets(
+        self,
+        budgets,
+        resets,
+        rewards,
+        const_fn_evals,
+    ):
+        return budgets
 
     def _sum_reduce(
         self,
@@ -232,3 +243,48 @@ class SumHLSegment(HLSegment):
     ):
         return np.minimum(self.max_violation - v_h_estimates, v_l_estimates + budgets)
 
+class BudgetTransformHLSegment(HLSegment):
+    def __init__(
+        self,
+        size=128,
+        batch_iterations=5,
+        batch_size=None,
+        discount_factor=0.97,
+        trace_decay=0.95,
+        h_term_penalty=0,
+        l_term_penalty=0,
+        clip_upper_bound=0,
+        clip_lower_bound=-2
+    ):
+        self.clip_upper_bound = clip_upper_bound
+        self.clip_lower_bound = clip_lower_bound
+        super().__init__(size, batch_iterations, batch_size, discount_factor, trace_decay, h_term_penalty, l_term_penalty)
+    def _transform_budgets(
+        self,
+        budgets,
+        resets,
+        rewards,
+        const_fn_evals,
+    ):
+        new_budgets = np.zeros_like(budgets)
+        updated_budgets = budgets[0]
+        for t in range(len(budgets)):
+            updated_budgets[resets[t]] = budgets[t][resets[t]]
+            new_budgets[t] = updated_budgets
+            updated_budgets += rewards[t]
+            updated_budgets += (1 - self.discount_factor) * const_fn_evals[t]
+            updated_budgets /= self.discount_factor
+            updated_budgets = np.clip(updated_budgets, self.clip_lower_bound, self.clip_upper_bound)
+
+        # Debugging
+        # import matplotlib.pyplot as plt
+        # fig, axs = plt.subplots(1, 2)
+        # axs[0].matshow(budgets)
+        # axs[1].matshow(new_budgets)
+        # axs[0].set_title("Old budgets")
+        # axs[1].set_title("New budgets")
+        # fig.colorbar(axs[0].imshow(budgets))
+        # fig.colorbar(axs[1].imshow(new_budgets))
+        # plt.show()
+        # import pudb; pudb.set_trace()
+        return new_budgets

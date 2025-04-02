@@ -40,7 +40,7 @@ def find_root(function, x_min, x_max, n=64):
     search_space = np.linspace(x_min, x_max, n, axis=-1)
     evals = function(search_space)
     min_distance_indices = np.argmin(np.abs(evals), axis=-1, keepdims=True)
-    greater_than_zero = evals > 0
+    greater_than_zero = evals > -0.05
     np.put_along_axis(greater_than_zero, min_distance_indices, True, axis=-1)
     best_indices = np.argmax(greater_than_zero, axis=-1, keepdims=True)
     z_star = np.take_along_axis(search_space, best_indices, axis=-1)[..., 0]
