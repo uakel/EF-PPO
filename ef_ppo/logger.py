@@ -14,7 +14,6 @@ import deprl.vendor.tonic.utils.logger as depRL_logger
 
 current_logger = None
 
-
 def get_sorted_folders(folders):
     def get_datetime_key(s):
         date_time_str = s.split(".")[0] + s.split(".")[1]
@@ -82,7 +81,7 @@ class Logger:
             if resume
             else create_results_path(config, env)
         )
-        self.log_file_path = os.path.join(self.path, "log.sspe")
+        self.log_file_path = os.path.join(self.path, "log.csv")
 
         # Save the launch script.
         if script_path:
@@ -222,14 +221,13 @@ class Logger:
                 except Exception:
                     pass
                 with open(self.log_file_path, "w") as file:
-                    file.write("!import numpy as np\n")
-                    file.write(";".join(map(repr, self.final_keys)) + "\n")
-                    file.write(";".join(map(repr, vals)) + "\n")
+                    file.write(",".join(map(repr, self.final_keys)) + "\n")
+                    file.write(",".join(map(repr, vals)) + "\n")
             else:
                 with open(self.log_file_path, "r") as file:
                     lines = file.read().splitlines()
-                old_keys = lines[0].split(";")
-                old_lines = [line.split(";") for line in lines[1:]]
+                old_keys = lines[0].split(",")
+                old_lines = [line.split(",") for line in lines[1:]]
                 new_indices = []
                 j = 0
                 for i, key in enumerate(self.final_keys):
@@ -242,13 +240,13 @@ class Logger:
                     for i in new_indices:
                         line.insert(i, "None")
                 with open(self.log_file_path, "w") as file:
-                    file.write(";".join(self.final_keys) + "\n")
+                    file.write(",".join(self.final_keys) + "\n")
                     for line in old_lines:
-                        file.write(";".join(line) + "\n")
-                    file.write(";".join(map(repr, vals)) + "\n")
+                        file.write(",".join(line) + "\n")
+                    file.write(",".join(map(repr, vals)) + "\n")
         else:
             with open(self.log_file_path, "a") as file:
-                file.write(";".join(map(repr, vals)) + "\n")
+                file.write(",".join(map(repr, vals)) + "\n")
 
         self.epoch_dict.clear()
         self.last_epoch_progress = None

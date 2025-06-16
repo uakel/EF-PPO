@@ -5,7 +5,7 @@ Base Trainer Class
 from typing import *
 from deprl.vendor.tonic.agents import Agent
 from ef_ppo.custom_distributed import Parallel, Sequential
-from ef_ppo.ef_ppo import EF_PPO
+from ef_ppo.agents.ef_ppo import EF_PPO
 
 # Logging
 from ef_ppo import logger

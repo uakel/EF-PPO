@@ -2,7 +2,7 @@ from typing import *
 import numpy as np
 
 from ef_ppo import logger
-from ef_ppo.ef_ppo import EF_PPO
+from ef_ppo.agents.ef_ppo import EF_PPO
 from ef_ppo.custom_distributed import Parallel, Sequential
 
 def R_h_update(

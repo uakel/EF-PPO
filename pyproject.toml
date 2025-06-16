@@ -1,16 +1,9 @@
-[tool.poetry]
+[project]
 name = "ef-ppo"
-version = "0.1.1"
-description = "EF-PPO implementation of Leonard Franz"
-authors = ["Leonard Franz <leonard.franz@student.uni-tuebingen.de>"]
+version = "0.1.0"
+description = "Add your description here"
 readme = "README.md"
-
-[tool.poetry.dependencies]
-# python = ">=3.10, <=3.11.5"
-deprl = "^0.5.0"
-myosuite = "^2.5.0"
-# gait-40-dof-22-musc-sagittal = "^0.1.4"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires-python = ">=3.9, <=3.11.5"
+dependencies = [
+    "deprl>=0.5.0",
+]
