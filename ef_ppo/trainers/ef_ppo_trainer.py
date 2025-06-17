@@ -17,7 +17,8 @@ import numpy as np
 class EFPPOTrainer(BaseTrainer):
     def __init__(
         self,
-        constraint_function: str = "lambda obs, ms: -np.ones(obs.shape[0]) * 999",
+        constraint_function: Union[str, Callable] = 
+            lambda obs, ms: -np.ones(obs.shape[0]) * 999,
         use_env_constraint: bool = False,
         min_budget: float = 0,
         max_budget: float = 0,
@@ -27,7 +28,13 @@ class EFPPOTrainer(BaseTrainer):
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.constraint_function : Callable = eval(constraint_function)
+        if isinstance(constraint_function, str):
+            self.constraint_function : Callable = eval(constraint_function)
+        elif isinstance(constraint_function, Callable):
+            self.constraint_function : Callable = constraint_function
+        else:
+            raise ValueError("Constraint function must either be callable or str representing callable")
+
         self.use_env_constraint : bool = use_env_constraint
 
         self.min_budget : float = min_budget

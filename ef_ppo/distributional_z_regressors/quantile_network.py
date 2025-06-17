@@ -24,14 +24,13 @@ class QuantileDistribution:
         diffs = self.quantiles[...,:-1] - self.quantiles[...,:-1]
         arg_min = diffs.argmin(dim=-1)
         return torch.gather(self.quantiles, -1, arg_min[..., None])
-
         
 class QuantileRegressionHead(nn.Module):
     def __init__(self, num_quantiles=10):
         super().__init__()
         self.num_quantiles = num_quantiles
 
-    def initialize(self, input_size):
+    def initialize(self, input_size, return_normalizer):
         self.quantile_layer = nn.Linear(input_size, self.num_quantiles)
 
     def forward(self, inputs):
@@ -52,10 +51,10 @@ class QuantileRegression:
         self.variables = models.trainable_variables(self.model)
         self.optimizer = self.optimizer(self.variables)
 
-    def __call__(self, observations, labels):
+    def __call__(self, observations, budgets):
         self.optimizer.zero_grad()
         predicted_quantiles = self.model(observations).quantiles
-        losses = self.loss(predicted_quantiles, labels[..., None])
+        losses = self.loss(predicted_quantiles, budgets[..., None])
         losses = torch.where(
                 predicted_quantiles > self.quantiles, 
                 self.quantiles * losses,
@@ -66,5 +65,4 @@ class QuantileRegression:
         self.optimizer.step()
 
         return dict(loss=loss.detach(), v=predicted_quantiles.detach())
-
 

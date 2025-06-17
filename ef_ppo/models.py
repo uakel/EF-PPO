@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 class HLActorCritic(torch.nn.Module):
@@ -17,6 +18,11 @@ class HLActorCritic(torch.nn.Module):
         self.return_normalizer = return_normalizer
 
     def initialize(self, observation_space, action_space):
+        # Append the budget dimension to the observation space
+        low = np.append(observation_space.low, 0)
+        high = np.append(observation_space.high, np.inf)
+        observation_space = type(observation_space)(low=low, high=high) 
+
         if self.observation_normalizer:
             self.observation_normalizer.initialize(observation_space.shape)
         self.actor.initialize(
@@ -34,6 +40,29 @@ class HLActorCritic(torch.nn.Module):
             self.observation_normalizer,
             self.return_normalizer,
         )
+
+class Distributional_z_HL_critic(HLActorCritic):
+    def __init__(
+        self,
+        actor,
+        h_critic,
+        l_critic,
+        z_regressor,
+        observation_normalizer=None,
+        return_normalizer=None,
+    ):
+        self.z_regressor = z_regressor
+        super().__init__(
+            actor=actor,
+            h_critic=h_critic,
+            l_critic=l_critic,
+            observation_normalizer=observation_normalizer,
+            return_normalizer=return_normalizer,
+        )
+
+    def initialize(self, observation_space, action_space):
+        self.z_regressor.initialize(observation_space, action_space)
+        super().initialize(observation_space, action_space)
 
 class FourierObservationEncoder(torch.nn.Module):
     def __init__(

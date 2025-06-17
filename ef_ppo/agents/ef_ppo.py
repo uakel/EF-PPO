@@ -68,12 +68,6 @@ class EF_PPO(Agent):
         """
         Initialize the agent.
         """
-
-        # Append the budget dimension to the observation space
-        low = np.append(observation_space.low, 0)
-        high = np.append(observation_space.high, np.inf)
-        observation_space = type(observation_space)(low=low, high=high) 
-
         # Initialize the model, replay, and updaters.
         super().initialize(seed=seed)
         self.model.initialize(observation_space, action_space)
@@ -170,7 +164,6 @@ class EF_PPO(Agent):
         # Return the action
         return self.deterministic_step(observations, budget_star)
 
-
     def test_step(self, observations, steps, muscle_states=None):
         """
         Wrapper for _test_step
@@ -179,7 +172,6 @@ class EF_PPO(Agent):
         self.budget_star = budget_star.copy()
         self.last_observations = observations.copy()
         return actions.numpy(force=True)
-
 
     def _test_step(self, observations):
         """
