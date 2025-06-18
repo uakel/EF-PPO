@@ -21,7 +21,7 @@ class QuantileDistribution:
         return self.quantiles[..., i]
 
     def max_density(self):
-        diffs = self.quantiles[...,:-1] - self.quantiles[...,:-1]
+        diffs = self.quantiles[...,:-1] - self.quantiles[...,1:]
         arg_min = diffs.argmin(dim=-1)
         return torch.gather(self.quantiles, -1, arg_min[..., None])
         
