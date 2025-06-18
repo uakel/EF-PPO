@@ -5,3 +5,4 @@ test_run/
 dist/
 .DS_Store
 .venv/
+*.egg-info
