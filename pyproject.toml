@@ -5,11 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9,<=3.11.5"
 dependencies = [
-    "deprl==0.5.0",
+    "deprl",
+    "gym>=0.26.2",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ef_ppo"]
+
+[tool.uv.sources]
+deprl = { path = "packages/depRL" }
 
 [build-system]
 requires = ["hatchling"]
