@@ -2,9 +2,9 @@ from ef_ppo.trainers.parametric_z_trainer import ParametricZtrainer
 
 def z_regression_trainer_maker():
     l_buffer = 256
-    n_updates_per_epoch = 1
-    n_parallel = 1
-    n_sequential = 1
+    n_updates_per_epoch = 1 
+    n_parallel = 8
+    n_sequential = 20
 
     epoch_steps = l_buffer * n_parallel * n_sequential * n_updates_per_epoch
     n_epochs = 150

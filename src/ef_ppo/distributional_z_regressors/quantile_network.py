@@ -11,7 +11,7 @@ class QuantileDistribution:
 
     def sample(self):
         indices = torch.randint(0, self.n_quantiles, self.quantiles.shape[:-1])
-        return torch.gather(self.quantiles, -1, indices[..., -1])
+        return torch.gather(self.quantiles, -1, indices[..., None])[..., 0]
 
     def mean(self):
         return self.quantiles.mean(dim=-1)
@@ -31,10 +31,13 @@ class QuantileRegressionHead(nn.Module):
         self.num_quantiles = num_quantiles
 
     def initialize(self, input_size, return_normalizer):
-        self.quantile_layer = nn.Linear(input_size, self.num_quantiles)
+        self.offsets = nn.Linear(input_size, self.num_quantiles)
+        self.base = nn.Linear(input_size, 1)
 
     def forward(self, inputs):
-        quantiles = self.quantile_layer(inputs)
+        b = self.base(inputs)                          
+        o = F.softplus(self.offsets(inputs))           
+        quantiles = torch.cumsum(o, dim=-1) + b 
         return QuantileDistribution(quantiles)
 
 class QuantileRegression:

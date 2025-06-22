@@ -81,7 +81,7 @@ class EFPPOTrainer(BaseTrainer):
         rewards = info["rewards"]
         self._budgets = np.clip(
             (self._budgets + rewards) / self.discount,
-            -self.max_budget,
+             self.min_budget,
              self.max_budget
         )
         
