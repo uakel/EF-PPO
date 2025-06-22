@@ -64,5 +64,5 @@ class QuantileRegression:
         loss.backward()
         self.optimizer.step()
 
-        return dict(loss=loss.detach(), v=predicted_quantiles.detach())
+        return dict(loss=loss.detach().cpu().item(), v=predicted_quantiles.detach())
 

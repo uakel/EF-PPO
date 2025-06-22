@@ -7,7 +7,7 @@ from ef_ppo.custom_distributed import Parallel, Sequential
 
 N_FILLINGS = 5
 
-def test(
+def train(
     environment: Union[Parallel, Sequential],
     agent: Z_aware_EF_PPO, 
 ):
@@ -16,7 +16,7 @@ def test(
     """
     n_iters = agent.replay.max_size * N_FILLINGS
 
-    score = "TODO"
+    score = 0
     observations = agent.last_observations
     for it in range(n_iters):
         actions = agent.deterministic_opt_step(observations, it, None)

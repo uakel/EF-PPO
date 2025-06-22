@@ -51,7 +51,6 @@ class Distributional_z_HL_critic(HLActorCritic):
         observation_normalizer=None,
         return_normalizer=None,
     ):
-        self.z_regressor = z_regressor
         super().__init__(
             actor=actor,
             h_critic=h_critic,
@@ -59,6 +58,7 @@ class Distributional_z_HL_critic(HLActorCritic):
             observation_normalizer=observation_normalizer,
             return_normalizer=return_normalizer,
         )
+        self.z_regressor = z_regressor
 
     def initialize(self, observation_space, action_space):
         self.z_regressor.initialize(observation_space, action_space)

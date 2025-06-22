@@ -13,7 +13,7 @@ class Z_aware_EF_PPO(DEP_EF_PPO):
     def __init__(self, model=None, replay=None, actor_updater=None,
                  h_critic_updater=None, l_critic_updater=None, z_regressor_updater=None,
                  log=True, budget_normalizer=1.0, min_budget=-2.7, max_budget=2.7):
-        self.l_critic_updater = z_regressor_updater or\
+        self.z_regressor_updater = z_regressor_updater or\
                                 QuantileRegression()
         super().__init__(
             model=model,
@@ -27,6 +27,12 @@ class Z_aware_EF_PPO(DEP_EF_PPO):
             max_budget=max_budget
         )
 
+    def initialize(self, observation_space, action_space, seed=None):
+        super().initialize(observation_space, action_space, seed)
+        self.z_regressor_updater.initialize(self.model.z_regressor)
+
+
+
     def learned_z_update(self, observations, budget_stars):
         self.replay.store(
             observations=observations,
@@ -36,12 +42,12 @@ class Z_aware_EF_PPO(DEP_EF_PPO):
             self._learned_z_update()
 
     def _learned_z_update(self):
-        for batch in self.replay.get_full(
+        for batch in self.replay.get(
             "observations",
             "budgets"
         ):
             batch = {k: torch.as_tensor(v) for k, v in batch.items()}
-            info = self.model.z_regressor(**batch)
+            info = self.z_regressor_updater(**batch)
             logger.store("z_regressor/loss", info["loss"])
 
     def learned_z_step(self, observations, steps, muscle_states=None):
