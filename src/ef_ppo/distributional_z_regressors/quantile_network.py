@@ -41,11 +41,12 @@ class QuantileRegressionHead(nn.Module):
         return QuantileDistribution(quantiles)
 
 class QuantileRegression:
-    def __init__(self, loss=None, optimizer=None):
+    def __init__(self, loss=None, optimizer=None, lambda_=0.1):
         self.loss = loss or nn.HuberLoss()
         self.optimizer = optimizer or (
             lambda params: torch.optim.Adam(params, lr=1e-3)
         )
+        self.lambda_= lambda_
 
     def initialize(self, model):
         self.model = model 
@@ -56,16 +57,25 @@ class QuantileRegression:
 
     def __call__(self, observations, budgets):
         self.optimizer.zero_grad()
-        predicted_quantiles = self.model(observations).quantiles
+        predicted_quantiles = self.model(observations).quantiles   # (batch_size, n_quantiles)
+        
         losses = self.loss(predicted_quantiles, budgets[..., None])
+        
         losses = torch.where(
-                predicted_quantiles > self.quantiles, 
-                self.quantiles * losses,
-                (1 - self.quantiles) * losses
+            predicted_quantiles > self.quantiles,
+            self.quantiles * losses,
+            (1 - self.quantiles) * losses
         )
         loss = losses.mean()
+        
+        # Entropy regularization
+        eps = 1e-6
+        gaps = predicted_quantiles[..., 1:] - predicted_quantiles[..., :-1]
+        entropy_regularizer = -torch.log(gaps + eps).mean()   # aggregation across all batch and gaps
+        
+        loss += self.lambda_ * entropy_regularizer
+        
         loss.backward()
         self.optimizer.step()
 
         return dict(loss=loss.detach().cpu().item(), v=predicted_quantiles.detach())
-

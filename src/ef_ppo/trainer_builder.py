@@ -2,7 +2,7 @@ from ef_ppo.trainers.parametric_z_trainer import ParametricZtrainer
 
 def z_regression_trainer_maker():
     l_buffer = 256
-    n_updates_per_epoch = 1 
+    n_updates_per_epoch = 50
     n_parallel = 8
     n_sequential = 20
 
